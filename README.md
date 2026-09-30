@@ -29,10 +29,41 @@ in. It has its own backend and therefore its own state file, so `apply` in
 | `shared/` | `shared/terraform.tfstate` |
 | `projects/games/` | `projects/games/terraform.tfstate` |
 
-**Sharing values.** Projects read `shared/`'s outputs (region and domain now;
-VPC and cluster ids later) with a read-only `data "terraform_remote_state"
+**Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
+`vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
 "shared"` block. `shared/outputs.tf` is the contract: projects should rely only
 on what it exports.
+
+## Shared resources
+
+`shared/` owns everything more than one project uses:
+
+- **DNS zone** `cartergrove.me`. The zone itself only. Each project creates its
+  own subdomain records (`games`, `stats`, …). Records that were already in the
+  zone (the apex `A` and `www`) are not managed by Terraform and are left as is.
+- **VPC** `shared-nyc3`. Apps attach to it to reach Postgres privately.
+- **Postgres cluster** `shared-postgres`: PostgreSQL 18, `db-s-1vcpu-1gb`
+  (1 vCPU, 1 GiB RAM, 10 GiB disk), single node, **$15/month** at the time of
+  writing (see DigitalOcean's pricing page). There's no standby node: a node failure
+  means a few minutes of downtime while DO replaces it. Projects get a database
+  and user with [`modules/project-database`](modules/README.md).
+- **Database firewall.** Only the VPC's range, plus any IPs in
+  `postgres_trusted_ips`, may connect. It lives in `shared/` because DO keeps
+  one trusted-source list per cluster (see the module README).
+
+The zone and the cluster have `prevent_destroy`: Terraform refuses any plan that
+would delete them. To really delete one, remove that line first.
+
+### DNS: nameservers (one-time, done)
+
+The registrar for `cartergrove.me` points at DigitalOcean's nameservers
+`ns1.digitalocean.com`, `ns2.digitalocean.com` and `ns3.digitalocean.com`.
+That's set in the registrar's control panel, not in Terraform. You'd only redo it
+after transferring the domain. Check it with `nslookup -type=NS cartergrove.me`.
+
+The zone already existed in DigitalOcean before Terraform, so `shared/main.tf`
+*imports* it (an `import` block) instead of creating it. The first
+`terraform plan` shows `1 to import`.
 
 ## Conventions
 
@@ -40,7 +71,9 @@ on what it exports.
   `games-hub`.
 - **Tags:** every taggable resource gets `project:<name>` (`local.tags`).
 - **DO Projects:** each project's resources are assigned to a DigitalOcean
-  Project of the same name, so the control panel groups them.
+  Project of the same name, so the control panel groups them. `shared/`'s
+  resources go in the hand-made `cartergrove.me` project, which Terraform
+  only reads (a `data` source) and doesn't manage.
 - **Versions:** Terraform `~> 1.14` and provider `digitalocean/digitalocean`
   `~> 2.102`. The exact provider build is pinned by each root module's
   committed `.terraform.lock.hcl` (hashes for Windows, Linux and macOS arm64).
