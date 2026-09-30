@@ -22,8 +22,9 @@ output "vpc_ip_range" {
 }
 
 # Grouped so it can be passed straight to modules/project-database as `cluster`.
-# Deliberately excludes the cluster's admin (doadmin) credentials: projects get
-# their own user from the module and never see the admin password.
+# Leaves out the cluster's admin (doadmin) credentials so project configs never
+# use them. This is not a security boundary: the password is still in shared/'s
+# state, which anyone who can read the state bucket (today: just you) can read.
 output "postgres" {
   description = "Shared Postgres cluster: id, name, public/private host and port."
   value = {

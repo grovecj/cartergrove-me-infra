@@ -8,6 +8,8 @@ resource "digitalocean_database_db" "this" {
 
 # DigitalOcean generates the password; it is stored in the caller's state
 # (private bucket) and exposed only through the sensitive outputs below.
+# The user can't create tables until it's granted CREATE on the `public`
+# schema, a one-time manual step: see modules/README.md.
 resource "digitalocean_database_user" "this" {
   cluster_id = var.cluster.id
   name       = var.name
