@@ -1,7 +1,10 @@
+# nyc1, not nyc3: App Platform's "nyc" region can only attach apps to VPCs in
+# nyc1, and apps reach Postgres through the VPC. (Spaces isn't offered in nyc1,
+# so buckets stay in nyc3; see projects/games/main.tf.)
 variable "region" {
   description = "DigitalOcean region used by shared resources and, by default, every project."
   type        = string
-  default     = "nyc3"
+  default     = "nyc1"
 }
 
 variable "domain" {

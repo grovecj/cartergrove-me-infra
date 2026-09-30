@@ -96,6 +96,10 @@ jobs:
       # Only shared/ declares it; other root modules ignore it. A JSON list,
       # e.g. ["203.0.113.7"]. Without it, plans remove the trusted IPs.
       TF_VAR_postgres_trusted_ips: ${{ secrets.POSTGRES_TRUSTED_IPS || '[]' }}
+      # Only projects/accounts/ declares these (Google OAuth client). They're
+      # sensitive variables, so plans print "(sensitive value)", never them.
+      TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
+      TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

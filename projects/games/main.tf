@@ -37,8 +37,12 @@ locals {
   hostname = "${local.project}.${local.domain}"
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
-  # etc. name the datacenter ("nyc3"). Strip the trailing digits.
+  # etc. name the datacenter ("nyc1"). Strip the trailing digits.
   app_region = regex("^[a-z]+", local.region)
+
+  # Spaces isn't offered in every datacenter (not in nyc1, the shared region),
+  # so buckets have their own region. Changing it would replace the bucket.
+  spaces_region = "nyc3"
 }
 
 # The DigitalOcean Project that groups this project's resources in the
@@ -159,7 +163,7 @@ resource "digitalocean_record" "hub" {
 # Spaces bucket names are unique per region across all DO customers.
 resource "digitalocean_spaces_bucket" "downloads" {
   name   = "${local.project}-downloads"
-  region = local.region
+  region = local.spaces_region
   acl    = "private"
 }
 
