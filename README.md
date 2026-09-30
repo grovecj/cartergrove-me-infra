@@ -120,7 +120,10 @@ too, with a web build's `index.html` at its root.
 
 **Link with a trailing slash** (`/match3/`, not `/match3`). A Unity web build
 loads `Build/...` relative to the page, and relative to `/match3` that's
-`/Build/...`, which the hub answers with a 404.
+`/Build/...`, which the hub answers with a 404. Ingress rules only match by
+prefix, so a `/match3` → `/match3/` redirect can't be set up here (it would also
+catch `/match3/` and loop). Making the bare URL work is up to the game's page,
+e.g. a script in its web template that adds the missing slash.
 
 ## Conventions
 

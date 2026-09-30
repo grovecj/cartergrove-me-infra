@@ -72,10 +72,13 @@ resource "digitalocean_app" "hub" {
 
     # Landing page at "/". It's a plain HTML file kept in this repo
     # (projects/games/hub/), so there's nothing to build. Pushing a change to
-    # it on main redeploys it.
+    # it on main redeploys it. `output_dir` is relative to `source_dir`: "/"
+    # serves the directory as-is. Left unset, App Platform would look for a
+    # build output folder (dist/, public/, ...) that doesn't exist here.
     static_site {
       name       = "hub"
       source_dir = "projects/games/hub"
+      output_dir = "/"
 
       github {
         repo           = "grovecj/cartergrove-me-infra"
@@ -88,11 +91,12 @@ resource "digitalocean_app" "hub" {
     # per element of `for_each`; inside it, `static_site.key` is the map key
     # ("match3") and `static_site.value` the object ({ repo, branch }).
     # Each game's branch holds a ready-made build (index.html at its root), so
-    # again there's no build command: App Platform just serves the files.
+    # again there's no build command and the branch root is served as-is.
     dynamic "static_site" {
       for_each = var.games
       content {
-        name = static_site.key
+        name       = static_site.key
+        output_dir = "/"
 
         github {
           repo           = static_site.value.repo
