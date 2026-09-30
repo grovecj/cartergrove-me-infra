@@ -113,6 +113,7 @@ terraform plan      # reads shared's outputs via terraform_remote_state
 
 ## Note: no state locking
 
-State locking is off. That's fine while one person runs `apply` locally, but
-don't run two applies against the same root module at once. Revisit when CI
-starts applying (grovecj/cartergrove-me-infra#5).
+State locking is off. CI never runs two applies of the same root module at
+once (a `concurrency` group per root; see "CI: plan and apply" in the main
+README), but nothing stops a local `apply` from overlapping one in CI, or
+another local one. Don't run two applies against the same root module at once.

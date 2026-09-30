@@ -1,0 +1,233 @@
+# Terraform CI/CD. See "CI: plan and apply" in the README.
+#
+#   pull request  -> fmt check, then validate + plan for each changed root
+#                    module; each plan is posted (and kept up to date) as a
+#                    PR comment.
+#   push to main  -> the same plans against what was merged, in the run's
+#                    summary, then apply for each changed root module. Each
+#                    apply waits in the "production" environment until a
+#                    required reviewer approves it.
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Credentials come from repository secrets and are set per job (plan, apply),
+# so jobs that don't need them never see them. The Spaces key is used twice:
+# as AWS_* by the s3 backend (state) and as SPACES_* by the digitalocean
+# provider (buckets). See "CI: plan and apply" in the README.
+env:
+  TF_IN_AUTOMATION: "true" # shorter output, no "run terraform apply now" hints
+  TF_INPUT: "false"        # fail instead of prompting for a missing variable
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+jobs:
+  # Works out which root modules to run, as a JSON array for the matrices below.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history, so the base commit is there to diff against
+      - id: roots
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          roots=$(bash .github/scripts/changed-roots.sh "$BASE" "$HEAD")
+          echo "Changed root modules: $roots"
+          echo "roots=$roots" >> "$GITHUB_OUTPUT"
+
+  # Formatting is checked for the whole repo: it needs no credentials and takes
+  # a second, and it also covers modules/.
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff
+
+  plan:
+    needs: changes
+    # No job at all when nothing Terraform-related changed.
+    if: needs.changes.outputs.roots != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post the plan comment
+    strategy:
+      fail-fast: false # one root's broken plan shouldn't hide the others'
+      matrix:
+        root: ${{ fromJSON(needs.changes.outputs.roots) }}
+    # A newer push to the same PR makes an in-progress plan pointless.
+    concurrency:
+      group: plan-${{ github.ref }}-${{ matrix.root }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: terraform init
+
+      # validate + plan in one step that never fails by itself, so the comment
+      # below is posted even when the plan is broken. The last step fails the
+      # job afterwards if it was.
+      - name: terraform validate + plan
+        id: plan
+        run: |
+          set +e
+          {
+            terraform validate -no-color &&
+            terraform plan -no-color
+          } > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Write run summary
+        env:
+          ROOT: ${{ matrix.root }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        run: |
+          {
+            if [ "$EXITCODE" = 0 ]; then echo "### Plan for \`$ROOT\`"; else echo "### Plan for \`$ROOT\` failed"; fi
+            echo '```'
+            cat plan.txt
+            echo '```'
+            if [ "${{ github.event_name }}" = push ] && [ "$EXITCODE" = 0 ]; then
+              echo "To apply this, approve the \`apply ($ROOT)\` job waiting further down this run."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One comment per root module, found again by a hidden marker and edited
+      # on each push, so the PR shows the latest plan instead of a pile of them.
+      - name: Comment plan on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        env:
+          ROOT: ${{ matrix.root }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        with:
+          script: |
+            const fs = require('fs');
+            const root = process.env.ROOT;
+            const ok = process.env.EXITCODE === '0';
+            let plan = fs.readFileSync(`${root}/plan.txt`, 'utf8');
+
+            // GitHub rejects comments over 65536 characters; keep the end,
+            // which has the "Plan: ..." line or the error.
+            const max = 60000;
+            if (plan.length > max) {
+              plan = '... (truncated, see the run log for the full plan)\n' + plan.slice(-max);
+            }
+
+            const summary = ok
+              ? (plan.match(/^(Plan: .*|No changes\..*)$/m) || ['Plan succeeded'])[0]
+              : 'Plan failed';
+            const marker = `<!-- terraform-plan:${root} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `### ${ok ? '✅' : '❌'} Terraform plan: \`${root}\``,
+              `**${summary}**`,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```',
+              plan,
+              '```',
+              '</details>',
+              '',
+              `Commit ${context.payload.pull_request.head.sha.slice(0, 7)} · [run log](${runUrl})`,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail if the plan failed
+        if: steps.plan.outputs.exitcode != '0'
+        run: exit 1
+
+  apply:
+    needs: [changes, plan]
+    # Only after a merge, and only if every plan in this run succeeded.
+    if: github.event_name == 'push' && needs.changes.outputs.roots != '[]'
+    runs-on: ubuntu-latest
+    # The approval gate: "production" requires a reviewer and only accepts
+    # deployments from main (repo Settings -> Environments). The job doesn't
+    # start until someone approves it on the run page.
+    environment: production
+    strategy:
+      # One root at a time, in the order changed-roots.sh lists them (shared
+      # first, since projects read its outputs), and stop if one fails.
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        root: ${{ fromJSON(needs.changes.outputs.roots) }}
+    # State locking is off (see bootstrap/README.md), so never let two applies
+    # touch the same state: a second apply of the same root, from a later
+    # merge, waits for the first.
+    concurrency:
+      group: apply-${{ matrix.root }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: terraform init
+
+      # Plan again right before applying, and apply exactly that saved plan.
+      # The plan you approved (from the plan job) can't be reused: a saved plan
+      # can contain secrets, and artifacts of a public repo are public. If
+      # something changed since, this plan shows it in the log.
+      - name: terraform plan
+        run: terraform plan -no-color -out=tfplan
+
+      - name: terraform apply
+        run: terraform apply -no-color tfplan

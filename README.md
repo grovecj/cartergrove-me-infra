@@ -95,8 +95,60 @@ terraform plan       # preview changes
 terraform apply      # shows the plan again and asks before changing anything
 ```
 
-Apply `shared/` before any project that reads its outputs. CI for plan/apply is
-tracked in grovecj/cartergrove-me-infra#5.
+Apply `shared/` before any project that reads its outputs.
+
+## CI: plan and apply
+
+[`.github/workflows/terraform.yml`](.github/workflows/terraform.yml) runs
+Terraform in GitHub Actions. Only root modules affected by a change get a job.
+[`.github/scripts/changed-roots.sh`](.github/scripts/changed-roots.sh)
+decides: a root counts as affected if a file in its directory changed, if a
+module it calls under `modules/` changed, or if anything under `.github/`
+changed.
+
+| Event | What runs |
+| --- | --- |
+| Pull request to `main` | `terraform fmt -check` (whole repo), then `validate` + `plan` per affected root. Each plan is posted as a PR comment and updated in place on later pushes. |
+| Push to `main` (a merge) | The same plans against what was merged, in the run's **Summary**, then one `apply` job per affected root. Each waits for approval. |
+
+**Approving an apply.** The apply jobs use the `production` environment, which
+requires a reviewer. After a merge, open the run (**Actions → Terraform**),
+read the plans in its summary, then **Review deployments → Approve and
+deploy**. Roots are applied one at a time, `shared` first (projects read its
+outputs), and a failed apply stops the rest. Only approve after reading the
+plan.
+
+The apply job plans once more and applies exactly that saved plan. It can't
+reuse the plan you read: a saved plan can contain secrets, and a public repo's
+artifacts are public. If something changed in between (e.g. a manual edit in
+the control panel), the job log shows it.
+
+**One apply per root at a time.** State locking is off (see
+[bootstrap/README.md](bootstrap/README.md#note-no-state-locking)), so each
+root's apply is in its own `concurrency` group: an apply from a later merge
+waits for the running one. That only covers CI, so don't run a local `apply`
+while one is running in CI.
+
+### One-time CI setup
+
+1. **Secrets.** Under **Settings → Secrets and variables → Actions**, add
+   repository secrets `DIGITALOCEAN_TOKEN`, `SPACES_ACCESS_KEY_ID` and
+   `SPACES_SECRET_ACCESS_KEY` (see [bootstrap/README.md](bootstrap/README.md)
+   for how to create them; CI should get its own token and key). The workflow
+   also passes the Spaces key to the backend as `AWS_*`.
+2. **The `production` environment**, before the first merge. A workflow that
+   names an environment that doesn't exist creates it *without* protection,
+   and the apply would run unapproved. Under **Settings → Environments → New
+   environment**, create `production`, tick **Required reviewers** and add
+   yourself, and under **Deployment branches and tags** allow only `main`.
+   Required reviewers need a public repo (or GitHub Enterprise).
+
+Secrets with the same name set on the `production` environment override the
+repository ones for apply jobs only. That allows read-only credentials in the
+repository secrets (for PR plans) and full-access ones in `production`.
+
+Pull requests from forks don't get secrets, so their plans fail. That's
+expected: only the owner's branches get plans.
 
 ## Adding a project
 
