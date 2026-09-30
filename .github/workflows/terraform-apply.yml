@@ -1,0 +1,72 @@
+# Applies a list of root modules. Not triggered on its own: terraform.yml
+# calls it (a "reusable workflow") once for shared/ and then once for the
+# projects, so shared/ is always applied before the projects that read it.
+name: Terraform apply
+
+on:
+  workflow_call:
+    inputs:
+      roots:
+        description: Root modules to apply, as a JSON array.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Same as terraform.yml: a called workflow doesn't inherit the caller's env.
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # The approval gate: "production" requires a reviewer and only accepts
+    # deployments from main (repo Settings -> Environments). The job doesn't
+    # start until someone approves it on the run page.
+    environment: production
+    strategy:
+      fail-fast: false # projects are independent of each other
+      matrix:
+        root: ${{ fromJSON(inputs.roots) }}
+    # State locking is off (see bootstrap/README.md), so never let two applies
+    # touch the same state. While one apply of a root runs (or waits for
+    # approval), a later merge's apply of that root waits behind it. GitHub
+    # keeps only ONE waiting run per group: a third merge cancels the second.
+    # Nothing is lost: every merge plans every root, so the third run applies
+    # whatever the cancelled one would have, in any root.
+    concurrency:
+      group: apply-${{ matrix.root }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      TF_VAR_postgres_trusted_ips: ${{ secrets.POSTGRES_TRUSTED_IPS || '[]' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: terraform init
+
+      # Plan again right before applying, and apply exactly that saved plan.
+      # The plan you approved (from the plan job) can't be reused: a saved plan
+      # can contain secrets, and artifacts of a public repo are public. If
+      # something changed since, this plan shows it in the log.
+      - name: terraform plan
+        run: terraform plan -no-color -out=tfplan
+
+      - name: terraform apply
+        run: terraform apply -no-color tfplan

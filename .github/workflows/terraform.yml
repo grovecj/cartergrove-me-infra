@@ -1,0 +1,272 @@
+# Terraform CI/CD. See "CI: plan and apply" in the README.
+#
+#   pull request  -> fmt check, then validate + plan for each changed root
+#                    module; each plan is posted (and kept up to date) as a
+#                    PR comment.
+#   push to main  -> a plan of every root module against what was merged, in
+#                    the run's summary, then apply for each root whose plan
+#                    has changes (via terraform-apply.yml): shared/ first,
+#                    then the projects. Each apply waits in the "production"
+#                    environment until a required reviewer approves it.
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Credentials come from repository secrets and are set per job (plan, apply),
+# so jobs that don't need them never see them. The Spaces key is used twice:
+# as AWS_* by the s3 backend (state) and as SPACES_* by the digitalocean
+# provider (buckets). See "CI: plan and apply" in the README.
+env:
+  TF_IN_AUTOMATION: "true" # shorter output, no "run terraform apply now" hints
+  TF_INPUT: "false"        # fail instead of prompting for a missing variable
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+jobs:
+  # Works out which root modules to plan, as a JSON array for the matrix below.
+  # A pull request plans the roots it changes. A merge plans every root, and
+  # the "pending" job then applies those whose plan has changes. Picking roots
+  # by what the merged commit changed would miss a change whose apply was
+  # cancelled (see "One apply per root at a time" in the README).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.roots.outputs.roots }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history, so the base commit is there to diff against
+      - id: roots
+        env:
+          # An all-zero base makes changed-roots.sh list every root.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '0000000000000000000000000000000000000000' }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          roots=$(bash .github/scripts/changed-roots.sh "$BASE" "$HEAD")
+          echo "Root modules to plan: $roots"
+          echo "roots=$roots" >> "$GITHUB_OUTPUT"
+
+  # Formatting is checked for the whole repo: it needs no credentials and takes
+  # a second, and it also covers modules/.
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff
+
+  plan:
+    needs: changes
+    # No job at all when nothing Terraform-related changed.
+    if: needs.changes.outputs.roots != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post the plan comment
+    strategy:
+      fail-fast: false # one root's broken plan shouldn't hide the others'
+      matrix:
+        root: ${{ fromJSON(needs.changes.outputs.roots) }}
+    # A newer push to the same PR makes an in-progress plan pointless. On main
+    # this can cancel an earlier merge's plan (and so its applies), which is
+    # fine: the newer run plans every root against a newer main.
+    concurrency:
+      group: plan-${{ github.ref }}-${{ matrix.root }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      # Only shared/ declares it; other root modules ignore it. A JSON list,
+      # e.g. ["203.0.113.7"]. Without it, plans remove the trusted IPs.
+      TF_VAR_postgres_trusted_ips: ${{ secrets.POSTGRES_TRUSTED_IPS || '[]' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.14.0"
+          terraform_wrapper: false
+
+      # init + validate + plan in one step that never fails by itself, so the
+      # comment below is posted even when one of them breaks. The last step
+      # fails the job afterwards if it did. init's chatty output only goes in
+      # plan.txt when init fails.
+      - name: terraform init + validate + plan
+        id: plan
+        run: |
+          set +e
+          {
+            (terraform init -no-color > init.txt 2>&1 || { cat init.txt; exit 1; }) &&
+            terraform validate -no-color &&
+            terraform plan -no-color -detailed-exitcode
+          } > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          # -detailed-exitcode: 0 = no changes, 2 = changes, anything else failed.
+          changes=false
+          if [ "$code" = 2 ]; then changes=true; code=0; fi
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          echo "changes=$changes" >> "$GITHUB_OUTPUT"
+
+      - name: Write run summary
+        env:
+          ROOT: ${{ matrix.root }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+          CHANGES: ${{ steps.plan.outputs.changes }}
+        run: |
+          {
+            if [ "$EXITCODE" = 0 ]; then echo "### Plan for \`$ROOT\`"; else echo "### Plan for \`$ROOT\` failed"; fi
+            echo '```'
+            cat plan.txt
+            echo '```'
+            if [ "${{ github.event_name }}" = push ] && [ "$CHANGES" = true ]; then
+              echo "To apply this, approve the waiting apply job in this run (**Review deployments**)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Matrix jobs can't reliably pass per-root outputs on, so a root whose
+      # plan has changes leaves an artifact named after it, and the "pending"
+      # job reads the names. The file only holds the root's name, since
+      # artifacts of a public repo are public.
+      - name: Mark for apply
+        if: github.event_name == 'push' && steps.plan.outputs.changes == 'true'
+        id: mark
+        env:
+          ROOT: ${{ matrix.root }}
+        run: |
+          echo "$ROOT" > apply-marker.txt
+          echo "name=pending-${ROOT//\//-}" >> "$GITHUB_OUTPUT"
+      - name: Upload apply marker
+        if: steps.mark.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.mark.outputs.name }}
+          path: ${{ matrix.root }}/apply-marker.txt
+          retention-days: 1
+
+      # One comment per root module, found again by a hidden marker and edited
+      # on each push, so the PR shows the latest plan instead of a pile of them.
+      - name: Comment plan on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        env:
+          ROOT: ${{ matrix.root }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        with:
+          script: |
+            const fs = require('fs');
+            const root = process.env.ROOT;
+            const ok = process.env.EXITCODE === '0';
+            let plan = fs.readFileSync(`${root}/plan.txt`, 'utf8');
+
+            // GitHub rejects comments over 65536 characters; keep the end,
+            // which has the "Plan: ..." line or the error.
+            const max = 60000;
+            if (plan.length > max) {
+              plan = '... (truncated, see the run log for the full plan)\n' + plan.slice(-max);
+            }
+
+            const summary = ok
+              ? (plan.match(/^(Plan: .*|No changes\..*)$/m) || ['Plan succeeded'])[0]
+              : 'Plan failed';
+            const marker = `<!-- terraform-plan:${root} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `### ${ok ? '✅' : '❌'} Terraform plan: \`${root}\``,
+              `**${summary}**`,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```',
+              plan,
+              '```',
+              '</details>',
+              '',
+              `Commit ${context.payload.pull_request.head.sha.slice(0, 7)} · [run log](${runUrl})`,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail if the plan failed
+        if: steps.plan.outputs.exitcode != '0'
+        run: exit 1
+
+  # After a merge, and only if every plan succeeded: which roots have changes
+  # to apply, as `shared` (true/false) and `projects` (a JSON array).
+  pending:
+    needs: [changes, plan]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # to list this run's artifacts
+    outputs:
+      shared: ${{ steps.pending.outputs.shared }}
+      projects: ${{ steps.pending.outputs.projects }}
+    steps:
+      - id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROOTS: ${{ needs.changes.outputs.roots }}
+        run: |
+          names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[].name')
+          shared=false
+          projects=()
+          for root in $(jq -r '.[]' <<< "$ROOTS"); do
+            grep -qx "pending-${root//\//-}" <<< "$names" || continue
+            if [ "$root" = shared ]; then shared=true; else projects+=("$root"); fi
+          done
+          projects=$(jq -cn '$ARGS.positional' --args "${projects[@]}")
+          echo "To apply: shared=$shared, projects=$projects"
+          echo "shared=$shared" >> "$GITHUB_OUTPUT"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+
+  # shared/ goes first as its own job, because projects read its outputs; the
+  # projects' job needs it, so it can't start before shared/ is applied (or
+  # skipped, when it has no changes).
+  apply-shared:
+    needs: pending
+    if: needs.pending.outputs.shared == 'true'
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      roots: '["shared"]'
+    secrets: inherit
+
+  apply-projects:
+    needs: [pending, apply-shared]
+    # !cancelled() lets this run when apply-shared was skipped (a skipped
+    # dependency would otherwise skip this job too); the result checks stop
+    # it when anything before it failed.
+    if: >-
+      !cancelled()
+      && needs.pending.result == 'success'
+      && needs.pending.outputs.projects != '[]'
+      && contains(fromJSON('["success", "skipped"]'), needs.apply-shared.result)
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      roots: ${{ needs.pending.outputs.projects }}
+    secrets: inherit
