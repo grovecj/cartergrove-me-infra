@@ -11,6 +11,7 @@ stepping on each other.
 shared/            # root module: DNS zone, VPC, shared Postgres cluster, ...
 projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
+    hub/           # the hub's landing page, served at "/"
 modules/           # reusable building blocks, called from root modules
 bootstrap/         # one-time manual setup (state bucket, credentials)
 ```
@@ -64,6 +65,71 @@ after transferring the domain. Check it with `nslookup -type=NS cartergrove.me`.
 The zone already existed in DigitalOcean before Terraform, so `shared/main.tf`
 *imports* it (an `import` block) instead of creating it. The first
 `terraform plan` shows `1 to import`.
+
+## Games hub (`projects/games/`)
+
+`games.cartergrove.me` is **one** App Platform app, `games-hub`. App Platform
+attaches a custom domain to exactly one app, so path-based hosting
+(`/match3/`, `/<next-game>/`) means every game is a *component* of that app
+rather than an app of its own.
+
+- **Components.** `hub` serves the landing page at `/` from
+  [`projects/games/hub/`](projects/games/hub/index.html) in this repo. Each
+  game is a static site built from its own repo and branch, at `/<key>/`.
+  Both are plain files with no build step.
+- **Games map.** `var.games` in `projects/games/variables.tf` lists the games:
+
+  ```hcl
+  match3 = { repo = "grovecj/Match-3", branch = "web-build" }
+  ```
+
+  The app spec uses `dynamic` blocks to make one component and one routing rule
+  per entry. Only the component whose branch changed gets rebuilt when a
+  deploy runs.
+- **Domain and TLS.** A `CNAME` record `games` → the app's
+  `*.ondigitalocean.app` hostname, in the shared zone. App Platform issues and
+  renews the certificate itself once that record resolves, which can take a
+  few minutes after the first apply.
+- **Downloads.** Spaces bucket `games-downloads` (private, so it can't be
+  listed) with a CDN in front of it. One prefix per game, e.g.
+  `match3/Match3-Windows-latest.zip`. Uploads must set `public-read` on each
+  file, or the CDN can't fetch it. The CDN caches files for an hour (`ttl`), so
+  purge it after replacing a "latest" file (`doctl compute cdn flush <id> --files match3/*`).
+- **Outputs** (`terraform output`) are what the game repos' CD workflows need:
+  `app_id`, `app_url`, `game_urls`, `downloads_bucket`,
+  `downloads_bucket_endpoint`, `downloads_bucket_region`, `downloads_cdn_url`.
+
+### One-time: GitHub access
+
+App Platform pulls source through DigitalOcean's GitHub app, which is linked to
+your DigitalOcean account in the control panel. The API token can't set it up.
+Before the first apply: control panel → **Apps** → **Create App** → GitHub →
+**Connect GitHub**, install the app for **Only select repositories**, and pick
+`grovecj/cartergrove-me-infra` (for the landing page) plus each game's repo.
+Once the repo picker lists them, cancel out of the wizard. To add a repo later,
+use **Edit your GitHub permissions** on the same screen.
+
+Without the link, the apply fails with `400 ... GitHub user not authenticated`.
+Resources that don't depend on the app (bucket, CDN) may already have been
+created by then. That's fine: the next apply only creates what's missing.
+
+Each game's branch (e.g. Match-3's `web-build`) must exist before the apply
+too, with a web build's `index.html` at its root.
+
+### Adding a game
+
+1. Add an entry to `var.games`: `<key> = { repo = "owner/name", branch = "..." }`.
+   The key becomes the path (`/<key>/`), the component name and the downloads
+   prefix: lowercase letters, digits and dashes.
+2. Add a link to `/<key>/` in `projects/games/hub/index.html`.
+3. Grant DigitalOcean's GitHub app access to the repo (see above), then `terraform apply`.
+
+**Link with a trailing slash** (`/match3/`, not `/match3`). A Unity web build
+loads `Build/...` relative to the page, and relative to `/match3` that's
+`/Build/...`, which the hub answers with a 404. Ingress rules only match by
+prefix, so a `/match3` → `/match3/` redirect can't be set up here (it would also
+catch `/match3/` and loop). Making the bare URL work is up to the game's page,
+e.g. a script in its web template that adds the missing slash.
 
 ## Conventions
 
