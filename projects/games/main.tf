@@ -37,8 +37,13 @@ locals {
   hostname = "${local.project}.${local.domain}"
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
-  # etc. name the datacenter ("nyc3"). Strip the trailing digits.
+  # etc. name the datacenter ("nyc1"). Strip the trailing digits.
   app_region = regex("^[a-z]+", local.region)
+
+  # The downloads bucket stays in nyc3, where it was created, even though the
+  # shared region is now nyc1: a bucket's region can't change in place, so
+  # following the shared region would replace it and delete its files.
+  spaces_region = "nyc3"
 }
 
 # The DigitalOcean Project that groups this project's resources in the
@@ -60,6 +65,11 @@ resource "digitalocean_app" "hub" {
   spec {
     name   = "${local.project}-hub"
     region = local.app_region
+
+    # Enhanced threat control: extra protection at App Platform's edge
+    # against malicious traffic. It was switched on in the control panel;
+    # declaring it here keeps Terraform from turning it back off.
+    enhanced_threat_control_enabled = true
 
     # The custom domain. App Platform issues and renews the TLS certificate
     # itself once the DNS record below points at the app. (Setting `zone` here
@@ -159,7 +169,7 @@ resource "digitalocean_record" "hub" {
 # Spaces bucket names are unique per region across all DO customers.
 resource "digitalocean_spaces_bucket" "downloads" {
   name   = "${local.project}-downloads"
-  region = local.region
+  region = local.spaces_region
   acl    = "private"
 }
 

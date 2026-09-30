@@ -111,6 +111,48 @@ terraform plan      # reads shared's outputs via terraform_remote_state
 `shared/` must be applied at least once before any project can `plan`:
 `terraform_remote_state` fails if `shared/terraform.tfstate` doesn't exist yet.
 
+## 6. Google OAuth client (accounts)
+
+`projects/accounts/` (auth.cartergrove.me) signs users in with Google. Google
+only lets a site do that through an OAuth client registered in Google Cloud,
+which Terraform can't create. Do this once before the first accounts apply.
+
+1. [Google Cloud console](https://console.cloud.google.com/) → project picker
+   → **New project**, e.g. `cartergrove-me-accounts`.
+2. **APIs & Services → OAuth consent screen** (Google Auth Platform):
+   - User type **External**; app name e.g. `cartergrove.me`; your email as
+     support and developer contact.
+   - Authorized domain: `cartergrove.me`.
+   - Scopes: `openid`, `.../auth/userinfo.profile`, `.../auth/userinfo.email`.
+     These are non-sensitive, so Google doesn't need to review the app.
+   - While the app's status is **Testing**, only the test users you list can
+     sign in. **Publish app** (status "In production") to let anyone in.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   type **Web application**, name `auth.cartergrove.me`:
+   - Authorized redirect URI: `https://auth.cartergrove.me/login/oauth2/code/google`
+   - Copy the **client ID** and **client secret** from the dialog that
+     appears (or **Download JSON**). Google only shows a new client's secret
+     once; if you lose it, add a new secret to the client and delete the old one.
+4. Create a **second**, separate Web application client for local development
+   (`accounts-dev`), with redirect URI
+   `http://localhost:8080/login/oauth2/code/google`. Keeping it separate means
+   the production client never accepts a localhost redirect. Its id and secret
+   go in your local environment for running grovecj/accounts, not in this repo.
+5. Store the **production** client's values as GitHub secrets on this repo,
+   both as repository secrets and as `production` environment secrets (Settings
+   → Secrets and variables → Actions, and Settings → Environments →
+   `production`):
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+
+   For a local plan/apply of `projects/accounts/`, export them as
+   `TF_VAR_google_client_id` / `TF_VAR_google_client_secret`, like the other
+   credentials in step 4.
+
+This repo is public: never paste these values into an issue, PR, commit or
+`.tfvars` file. Terraform treats them as sensitive and prints
+`(sensitive value)` in plans.
+
 ## Note: no state locking
 
 State locking is off. CI never runs two applies of the same root module at

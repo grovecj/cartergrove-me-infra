@@ -43,6 +43,10 @@ resource "digitalocean_domain" "main" {
 # A VPC is a private network. Resources in it talk to each other over private
 # IPs that aren't reachable from the internet. The IP range is left for
 # DigitalOcean to pick so it can't clash with another VPC in the account.
+#
+# It must be in the datacenter App Platform attaches apps to. Each App Platform
+# region maps to exactly one: "nyc" -> nyc1 (see "How to Enable App Platform
+# VPC" in DO's docs). An app in "nyc" can't join a VPC in nyc3.
 resource "digitalocean_vpc" "main" {
   name        = "shared-${var.region}"
   region      = var.region
@@ -66,9 +70,15 @@ resource "digitalocean_database_cluster" "postgres" {
   tags                 = local.tags
 
   # Destroying the cluster deletes every project's data.
-  lifecycle {
-    prevent_destroy = true
-  }
+  #
+  # TEMPORARILY OFF to move the cluster from nyc3 to nyc1 (grovecj/cartergrove-me-infra#11).
+  # The provider can migrate a cluster's region in place, but not its VPC
+  # (private_network_uuid forces a new cluster), so the move is a replacement.
+  # That's fine only because no project has data on it yet. Turn this back on
+  # right after that apply.
+  # lifecycle {
+  #   prevent_destroy = true
+  # }
 }
 
 # Trusted sources: only these may connect to the cluster at all (the database
