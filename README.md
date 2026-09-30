@@ -101,11 +101,17 @@ rather than an app of its own.
 
 ### One-time: GitHub access
 
-App Platform pulls source through DigitalOcean's GitHub app. Before the first
-apply, give it access to `grovecj/cartergrove-me-infra` (for the landing page)
-and to each game's repo: control panel → **Apps** → **Create App** → GitHub →
-**Edit your GitHub permissions**, pick the repos, then cancel out of the wizard.
-Without access, the apply fails with an error about the repo not being found.
+App Platform pulls source through DigitalOcean's GitHub app, which is linked to
+your DigitalOcean account in the control panel. The API token can't set it up.
+Before the first apply: control panel → **Apps** → **Create App** → GitHub →
+**Connect GitHub**, install the app for **Only select repositories**, and pick
+`grovecj/cartergrove-me-infra` (for the landing page) plus each game's repo.
+Once the repo picker lists them, cancel out of the wizard. To add a repo later,
+use **Edit your GitHub permissions** on the same screen.
+
+Without the link, the apply fails with `400 ... GitHub user not authenticated`.
+Resources that don't depend on the app (bucket, CDN) may already have been
+created by then. That's fine: the next apply only creates what's missing.
 
 Each game's branch (e.g. Match-3's `web-build`) must exist before the apply
 too, with a web build's `index.html` at its root.
