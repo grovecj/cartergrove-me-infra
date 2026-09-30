@@ -121,7 +121,8 @@ too, with a web build's `index.html` at its root.
 1. Add an entry to `var.games`: `<key> = { repo = "owner/name", branch = "..." }`.
    The key becomes the path (`/<key>/`), the component name and the downloads
    prefix: lowercase letters, digits and dashes.
-2. Add a link to `/<key>/` in `projects/games/hub/index.html`.
+2. Add a link to `/<key>/` in `projects/games/hub/index.html`, plus a link to
+   its download on the CDN (`downloads_cdn_url`/`<key>/...`) if it has one.
 3. Grant DigitalOcean's GitHub app access to the repo (see above), then `terraform apply`.
 
 **Link with a trailing slash** (`/match3/`, not `/match3`). A Unity web build

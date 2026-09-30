@@ -29,7 +29,13 @@
   <h1>Games</h1>
   <ul>
     <!-- Trailing slash: the game's files are loaded relative to this URL. -->
-    <li><a href="/match3/">Match-3</a></li>
+    <!-- Downloads come from the games-downloads bucket's CDN (output
+         downloads_cdn_url), under the game's prefix. The game's CD workflow
+         keeps "-latest" pointing at the newest release. -->
+    <li>
+      <a href="/match3/">Match-3</a>
+      (<a href="https://games-downloads.nyc3.cdn.digitaloceanspaces.com/match3/Match3-Windows-latest.zip">download for Windows</a>)
+    </li>
   </ul>
 </body>
 </html>
