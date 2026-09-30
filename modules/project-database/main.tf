@@ -13,6 +13,14 @@ resource "digitalocean_database_db" "this" {
 resource "digitalocean_database_user" "this" {
   cluster_id = var.cluster.id
   name       = var.name
+
+  # Reading a Postgres user back from the API leaves an empty `settings {}`
+  # block in state (settings are for Kafka/OpenSearch ACLs). Without this, every
+  # later plan tries to remove it, and the provider's PUT is rejected with
+  # "missing the following required fields: user_settings".
+  lifecycle {
+    ignore_changes = [settings]
+  }
 }
 
 locals {
