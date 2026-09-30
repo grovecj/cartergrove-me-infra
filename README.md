@@ -47,7 +47,8 @@ on what it exports.
 - **Region `nyc1`** (`var.region`). App Platform's `nyc` region can only attach
   apps to VPCs in nyc1 (each App Platform region maps to one datacenter), and
   apps reach Postgres through the VPC, so the VPC and cluster must be there.
-  Spaces isn't offered in nyc1, so buckets (state, `games-downloads`) stay in nyc3.
+  Existing buckets (state, `games-downloads`) stay in nyc3: a bucket's region
+  can't change in place, so moving one would replace it and delete its files.
 - **VPC** `shared-nyc1`. Apps attach to it to reach Postgres privately.
 - **Postgres cluster** `shared-postgres`: PostgreSQL 18, `db-s-1vcpu-1gb`
   (1 vCPU, 1 GiB RAM, 10 GiB disk), single node, **$15/month** at the time of
@@ -206,8 +207,11 @@ locally (don't let it overlap a CI apply).
    because it still has members, wait a few minutes for DO to release the
    old cluster and re-run the job. Then `projects/accounts/` is applied. Its
    first deployment fails the health check, because Flyway can't create
-   tables until the grant below exists. That's expected. After this, turn
-   `prevent_destroy` on the cluster back on (`shared/main.tf`).
+   tables until the grant below exists. That's expected: the database and
+   user already exist, but the apply fails at the app. Terraform marks the
+   app *tainted* and skips what depends on it (the `auth` CNAME, the DO
+   Project). After this, turn `prevent_destroy` on the cluster back on
+   (`shared/main.tf`).
 4. **Database grant.** As `doadmin`, connected to the `accounts` database (see
    [modules/README.md](modules/README.md#project-database)):
 
@@ -215,8 +219,11 @@ locally (don't let it overlap a CI apply).
    GRANT CREATE ON SCHEMA public TO accounts;
    ```
 
-5. **Redeploy** (control panel → Apps → `accounts` → **Actions → Force rebuild
-   and deploy**, or `doctl apps create-deployment <app_id>`), then check
+5. **Re-run the accounts apply** (the failed `apply (projects/accounts)` job →
+   **Re-run jobs**, and approve it again). Its plan replaces the tainted app,
+   whose deployment now succeeds, and creates the CNAME and Project. A
+   redeploy from the control panel isn't enough: it would fix the app but
+   leave those two uncreated. Then check
    `curl https://auth.cartergrove.me/.well-known/openid-configuration` shows
    `"issuer":"https://auth.cartergrove.me"`. The discovery endpoint arrives
    with grovecj/accounts#3; until then, `/actuator/health` should say `UP`.

@@ -40,8 +40,9 @@ locals {
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.
   app_region = regex("^[a-z]+", local.region)
 
-  # Spaces isn't offered in every datacenter (not in nyc1, the shared region),
-  # so buckets have their own region. Changing it would replace the bucket.
+  # The downloads bucket stays in nyc3, where it was created, even though the
+  # shared region is now nyc1: a bucket's region can't change in place, so
+  # following the shared region would replace it and delete its files.
   spaces_region = "nyc3"
 }
 
