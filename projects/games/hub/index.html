@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  Placeholder landing page for games.cartergrove.me, served at "/" by the
+  hub app's "hub" component (see ../main.tf). When a game is added to
+  var.games, add a link to it here too.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Games</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 40rem;
+      margin: 4rem auto;
+      padding: 0 1rem;
+      line-height: 1.5;
+      color: #222;
+      background: #fafafa;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { color: #eee; background: #181818; }
+      a { color: #8ab4f8; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Games</h1>
+  <ul>
+    <!-- Trailing slash: the game's files are loaded relative to this URL. -->
+    <li><a href="/match3/">Match-3</a></li>
+  </ul>
+</body>
+</html>
