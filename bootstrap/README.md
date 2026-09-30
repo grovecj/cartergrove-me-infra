@@ -90,6 +90,8 @@ export AWS_ACCESS_KEY_ID="DO00..."
 export AWS_SECRET_ACCESS_KEY="..."
 export SPACES_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
 export SPACES_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+export AWS_REQUEST_CHECKSUM_CALCULATION="when_required"
+export AWS_RESPONSE_CHECKSUM_VALIDATION="when_required"
 ```
 
 To avoid retyping them, keep these lines in a script **outside this repo** and
