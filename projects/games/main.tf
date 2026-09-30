@@ -66,6 +66,11 @@ resource "digitalocean_app" "hub" {
     name   = "${local.project}-hub"
     region = local.app_region
 
+    # Enhanced threat control: extra protection at App Platform's edge
+    # against malicious traffic. It was switched on in the control panel;
+    # declaring it here keeps Terraform from turning it back off.
+    enhanced_threat_control_enabled = true
+
     # The custom domain. App Platform issues and renews the TLS certificate
     # itself once the DNS record below points at the app. (Setting `zone` here
     # would have DO create that record for us; we create it ourselves so it's
