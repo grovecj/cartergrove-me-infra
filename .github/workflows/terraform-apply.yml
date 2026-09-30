@@ -35,9 +35,9 @@ jobs:
     # State locking is off (see bootstrap/README.md), so never let two applies
     # touch the same state. While one apply of a root runs (or waits for
     # approval), a later merge's apply of that root waits behind it. GitHub
-    # keeps only ONE waiting run per group: a third merge replaces the second.
-    # That's safe, because each run applies its own commit of main, which
-    # includes every earlier merge.
+    # keeps only ONE waiting run per group: a third merge cancels the second.
+    # Nothing is lost: every merge plans every root, so the third run applies
+    # whatever the cancelled one would have, in any root.
     concurrency:
       group: apply-${{ matrix.root }}
       cancel-in-progress: false

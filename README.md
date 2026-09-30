@@ -100,7 +100,8 @@ Apply `shared/` before any project that reads its outputs.
 ## CI: plan and apply
 
 [`.github/workflows/terraform.yml`](.github/workflows/terraform.yml) runs
-Terraform in GitHub Actions. Only root modules affected by a change get a job.
+Terraform in GitHub Actions. On a pull request, only root modules affected by
+the change get a job.
 [`.github/scripts/changed-roots.sh`](.github/scripts/changed-roots.sh)
 decides: a root counts as affected if a file in its directory changed, if a
 module it calls under `modules/` changed, or if anything under `.github/`
@@ -109,14 +110,14 @@ changed.
 | Event | What runs |
 | --- | --- |
 | Pull request to `main` | `terraform fmt -check` (whole repo), then `validate` + `plan` per affected root. Each plan is posted as a PR comment and updated in place on later pushes. |
-| Push to `main` (a merge) | The same plans against what was merged, in the run's **Summary**, then one `apply` job per affected root ([`terraform-apply.yml`](.github/workflows/terraform-apply.yml)). Each waits for approval. |
+| Push to `main` (a merge) | A plan of **every** root against what was merged, in the run's **Summary**, then one `apply` job per root whose plan has changes ([`terraform-apply.yml`](.github/workflows/terraform-apply.yml)). Each waits for approval. |
 
 **Approving an apply.** The apply jobs use the `production` environment, which
 requires a reviewer. After a merge, open the run (**Actions → Terraform**),
 read the plans in its summary, then **Review deployments → Approve and
 deploy**. `shared` is applied first, as its own job, because projects read
 its outputs. The projects' applies only start after it succeeds (or when
-`shared` didn't change). Only approve after reading the plan.
+`shared` has no changes). Only approve after reading the plan.
 
 The apply job plans once more and applies exactly that saved plan. It can't
 reuse the plan you read: a saved plan can contain secrets, and a public repo's
@@ -127,10 +128,13 @@ the control panel), the job log shows it.
 [bootstrap/README.md](bootstrap/README.md#note-no-state-locking)), so each
 root's apply is in its own `concurrency` group: an apply from a later merge
 waits for the running one (or the one waiting for approval). GitHub keeps
-only one waiting run per group, so a third merge replaces the second. That's
-safe: each run applies its own commit of `main`, which includes the earlier
-merges. That only covers CI, so don't run a local `apply` while one is
-running in CI.
+only one waiting run per group, so a third merge cancels the second. Nothing
+is lost, because a merge plans every root rather than only the ones it
+changed: the third run applies whatever the second would have, including in
+roots the third merge didn't touch. This also picks up drift, and a change to
+`shared` outputs that a project reads is applied to that project on the next
+merge. The concurrency groups only cover CI, so don't run a local `apply`
+while one is running in CI.
 
 ### One-time CI setup
 
