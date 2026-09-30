@@ -77,7 +77,9 @@ $env:DIGITALOCEAN_TOKEN       = "dop_v1_..."
 $env:AWS_ACCESS_KEY_ID        = "DO00..."
 $env:AWS_SECRET_ACCESS_KEY    = "..."
 $env:SPACES_ACCESS_KEY_ID     = $env:AWS_ACCESS_KEY_ID
-$env:SPACES_SECRET_ACCESS_KEY = $env:AWS_SECRET_ACCESS_KEY
+$env:SPACES_SECRET_ACCESS_KEY          = $env:AWS_SECRET_ACCESS_KEY
+$env:AWS_REQUEST_CHECKSUM_CALCULATION = "when_required"
+$env:AWS_RESPONSE_CHECKSUM_VALIDATION = "when_required"
 ```
 
 Bash:
