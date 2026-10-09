@@ -13,6 +13,7 @@ projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
     hub/           # the hub's landing page, served at "/"
   accounts/        # root module: auth.cartergrove.me sign-in service + its database
+  beach/           # root module: beach.cartergrove.me live cam page
 modules/           # reusable building blocks, called from root modules
 bootstrap/         # one-time manual setup (state bucket, credentials)
 ```
@@ -31,6 +32,7 @@ in. It has its own backend and therefore its own state file, so `apply` in
 | `shared/` | `shared/terraform.tfstate` |
 | `projects/games/` | `projects/games/terraform.tfstate` |
 | `projects/accounts/` | `projects/accounts/terraform.tfstate` |
+| `projects/beach/` | `projects/beach/terraform.tfstate` |
 
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
@@ -227,6 +229,24 @@ locally (don't let it overlap a CI apply).
    `curl https://auth.cartergrove.me/.well-known/openid-configuration` shows
    `"issuer":"https://auth.cartergrove.me"`. The discovery endpoint arrives
    with grovecj/accounts#3; until then, `/actuator/health` should say `UP`.
+
+## Beach cams (`projects/beach/`)
+
+`beach.cartergrove.me` serves a page of live cams from Schooners in Panama
+City Beach, kept in the private repo
+[grovecj/schooners-cams](https://github.com/grovecj/schooners-cams).
+
+- **App.** App Platform app `beach-site` with one static site, `web`, served
+  from the repo root (`var.repo`, branch `var.branch`) with no build step.
+  Pushing to `main` redeploys it.
+- **Domain and TLS.** A `CNAME` record `beach` → the app's
+  `*.ondigitalocean.app` hostname, as for the games hub.
+- **Outputs:** `hostname`, `app_id`, `app_url`, `app_default_url`.
+
+**Before the first apply**, add `grovecj/schooners-cams` to DigitalOcean's
+GitHub app (see "One-time: GitHub access" above). The repo is private, so
+App Platform can't see it otherwise, and the apply fails with
+`GitHub user not authenticated`.
 
 ## Conventions
 
