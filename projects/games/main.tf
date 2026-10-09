@@ -115,10 +115,13 @@ resource "digitalocean_app" "hub" {
     name   = "${local.project}-hub"
     region = local.app_region
 
-    # Enhanced threat control: extra protection at App Platform's edge
-    # against malicious traffic. It was switched on in the control panel;
-    # declaring it here keeps Terraform from turning it back off.
-    enhanced_threat_control_enabled = true
+    # Enhanced threat control stays off. It answers requests with a
+    # JavaScript challenge page ("Just a moment..."), across the whole app.
+    # Browsers can pass that, but a game API's other clients can't (Unity's
+    # UnityWebRequest in the Windows build, curl), so they'd only ever get a
+    # 403. The APIs rate-limit per player and per IP themselves. Declared
+    # explicitly so a control-panel change shows up in the next plan.
+    enhanced_threat_control_enabled = false
 
     # The custom domain. App Platform issues and renews the TLS certificate
     # itself once the DNS record below points at the app. (Setting `zone` here
