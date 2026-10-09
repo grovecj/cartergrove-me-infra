@@ -95,6 +95,39 @@ rather than an app of its own.
   The app spec uses `dynamic` blocks to make one component and one routing rule
   per entry. Only the component whose branch changed gets rebuilt when a
   deploy runs.
+- **Game APIs.** An entry may add an optional `api` (an `optional(...)`
+  attribute in the variable's type), which gives the game a backend:
+
+  ```hcl
+  match3 = {
+    repo   = "grovecj/Match-3"
+    branch = "web-build"
+    api    = { repo = "grovecj/match-3-api" } # also: branch (main), instance_size
+  }
+  ```
+
+  - A **service** component `<key>-api`, built from the repo's `Dockerfile`
+    on every push, listening on 8081, on the smallest instance.
+  - A **route** `/<key>/api` → that service, so the API shares the game's
+    origin (`https://games.cartergrove.me/match3/api`) and the web build
+    needs no CORS. The route has `preserve_path_prefix = true`: the API
+    sees `/match3/api/scores/top`, not `/scores/top`, and Spring's
+    `server.servlet.context-path` is `/match3/api` locally too. One path
+    everywhere, rather than a prefix that only exists in production. The
+    health check (`/<key>/api/actuator/health`) reaches the container
+    directly, so it includes the prefix as well.
+  - A **database and user** `<key>` on the shared cluster, via
+    `modules/project-database`. When any game has an API, the hub app is
+    attached to the shared VPC and the API connects to the cluster's
+    `private_host`, as `projects/accounts/` does. The database firewall
+    already trusts the VPC, so nothing new is opened to the internet.
+  - **Env vars:** `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`,
+    `SPRING_DATASOURCE_PASSWORD` (`SECRET`), and for sign-in `AUTH_ISSUER`
+    (the accounts project's `issuer` output, read from its state) and
+    `AUTH_AUDIENCE` (the game key). The API checks tokens against the
+    issuer's public keys, so it needs no auth secrets.
+
+  Games without `api` get no service, route or database.
 - **Domain and TLS.** A `CNAME` record `games` → the app's
   `*.ondigitalocean.app` hostname, in the shared zone. App Platform issues and
   renews the certificate itself once that record resolves, which can take a
@@ -105,7 +138,7 @@ rather than an app of its own.
   file, or the CDN can't fetch it. The CDN caches files for an hour (`ttl`), so
   purge it after replacing a "latest" file (`doctl compute cdn flush <id> --files match3/*`).
 - **Outputs** (`terraform output`) are what the game repos' CD workflows need:
-  `app_id`, `app_url`, `game_urls`, `downloads_bucket`,
+  `app_id`, `app_url`, `game_urls`, `api_urls`, `downloads_bucket`,
   `downloads_bucket_endpoint`, `downloads_bucket_region`, `downloads_cdn_url`.
 
 ### One-time: GitHub access
@@ -134,12 +167,39 @@ too, with a web build's `index.html` at its root.
    its download on the CDN (`downloads_cdn_url`/`<key>/...`) if it has one.
 3. Grant DigitalOcean's GitHub app access to the repo (see above), then `terraform apply`.
 
+For a game with an `api`, also grant the GitHub app access to the API's repo,
+and see "One-time: a game API's first apply" below. Keys of games with an API
+can be at most 28 characters, so `<key>-api` fits App Platform's 32.
+
 **Link with a trailing slash** (`/match3/`, not `/match3`). A Unity web build
 loads `Build/...` relative to the page, and relative to `/match3` that's
 `/Build/...`, which the hub answers with a 404. Ingress rules only match by
 prefix, so a `/match3` → `/match3/` redirect can't be set up here (it would also
 catch `/match3/` and loop). Making the bare URL work is up to the game's page,
 e.g. a script in its web template that adds the missing slash.
+
+### One-time: a game API's first apply
+
+1. **Before merging:** `projects/accounts/` has been applied (its state holds
+   the `issuer` output that `AUTH_ISSUER` comes from), and DigitalOcean's
+   GitHub app can see the API's repo (e.g. `grovecj/match-3-api`).
+2. **Apply.** It creates the database and user, then updates the hub app.
+   The new deployment fails its health check, because Flyway can't create
+   tables until the grant below exists, so the apply job fails at the app.
+   That's expected and harmless: App Platform keeps the previous deployment
+   live, so the hub and the games carry on as before.
+3. **Database grant.** As `doadmin`, connected to the game's database (see
+   [modules/README.md](modules/README.md#project-database)):
+
+   ```sql
+   GRANT CREATE ON SCHEMA public TO match3;
+   ```
+
+4. **Deploy again.** Re-run the failed `apply (projects/games)` job and
+   approve it. If its plan has no changes (the spec was saved even though
+   the deployment failed), start a deployment yourself instead:
+   `doctl apps create-deployment <app_id>`. Then check
+   `curl https://games.cartergrove.me/match3/api/actuator/health` says `UP`.
 
 ## Accounts (`projects/accounts/`)
 

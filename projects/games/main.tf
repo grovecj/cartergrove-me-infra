@@ -1,5 +1,7 @@
 # games.cartergrove.me: a single App Platform app hosting every game at its own
 # path (/match3, ...), plus a Spaces bucket + CDN for downloadable builds.
+# Games with a backend also get an API service at /<key>/api and a database on
+# the shared Postgres cluster.
 #
 # Why one app for all games: App Platform attaches a custom domain to exactly
 # one app and routes paths only to that app's own components. So each game is a
@@ -25,6 +27,26 @@ data "terraform_remote_state" "shared" {
   }
 }
 
+# The accounts service's outputs, for the issuer whose tokens game APIs accept.
+# Same bucket, accounts' key. Only the state has to exist, so this works as
+# long as projects/accounts has been applied once.
+data "terraform_remote_state" "accounts" {
+  backend = "s3"
+
+  config = {
+    bucket    = "cartergrove-me-tfstate"
+    key       = "projects/accounts/terraform.tfstate"
+    endpoints = { s3 = "https://nyc3.digitaloceanspaces.com" }
+
+    region                      = "us-east-1"
+    skip_credentials_validation = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_s3_checksum            = true
+  }
+}
+
 locals {
   project = "games"
 
@@ -34,7 +56,12 @@ locals {
 
   region   = data.terraform_remote_state.shared.outputs.region
   domain   = data.terraform_remote_state.shared.outputs.domain
+  postgres = data.terraform_remote_state.shared.outputs.postgres
   hostname = "${local.project}.${local.domain}"
+
+  # The games that declare an api, as { key => api }. A `for` expression with
+  # an `if` filters a map; this drives the API components and their databases.
+  apis = { for key, game in var.games : key => game.api if game.api != null }
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.
@@ -59,6 +86,20 @@ resource "digitalocean_project" "games" {
   ]
 }
 
+# --- Game API databases -------------------------------------------------------
+
+# One database and user per game API, named after the game ("match3"), on the
+# shared cluster. `for_each` on a module makes one instance per map entry,
+# addressed as module.db["match3"]. After the first apply, grant the user
+# CREATE on the public schema, or Flyway's migrations fail (see the README).
+module "db" {
+  source   = "../../modules/project-database"
+  for_each = local.apis
+
+  name    = each.key
+  cluster = local.postgres
+}
+
 # --- Hub app -----------------------------------------------------------------
 
 resource "digitalocean_app" "hub" {
@@ -78,6 +119,18 @@ resource "digitalocean_app" "hub" {
     domain {
       name = local.hostname
       type = "PRIMARY"
+    }
+
+    # Attach the app to the shared VPC when any game has an API, so the APIs
+    # reach Postgres on `private_host` over the private network. The database
+    # firewall (in shared/) trusts the whole VPC range, so nothing is opened
+    # to the internet. A `dynamic` block over a one- or zero-element list is
+    # how Terraform writes "this block only if ...".
+    dynamic "vpc" {
+      for_each = length(local.apis) > 0 ? [data.terraform_remote_state.shared.outputs.vpc_id] : []
+      content {
+        id = vpc.value
+      }
     }
 
     # Landing page at "/". It's a plain HTML file kept in this repo
@@ -116,12 +169,101 @@ resource "digitalocean_app" "hub" {
       }
     }
 
+    # One service per game API, "<key>-api", built from its repo's Dockerfile.
+    # Only games in local.apis get one. `service.key` is the game key
+    # ("match3"), `service.value` its api object.
+    dynamic "service" {
+      for_each = local.apis
+      content {
+        name               = "${service.key}-api"
+        instance_size_slug = service.value.instance_size
+        instance_count     = 1
+        # Spring Boot's port (its PORT default in the API).
+        http_port = 8081
+
+        dockerfile_path = "Dockerfile"
+        github {
+          repo           = service.value.repo
+          branch         = service.value.branch
+          deploy_on_push = true
+        }
+
+        # A new deployment only takes traffic once this returns 200, so a
+        # build that can't start (bad config, failed migration) never
+        # replaces a working one. The health check talks to the container
+        # directly, not through the ingress, so the path includes the API's
+        # context path (see the routing rule below).
+        health_check {
+          http_path             = "/${service.key}/api/actuator/health"
+          initial_delay_seconds = 30
+          period_seconds        = 10
+        }
+
+        # SECRET values are encrypted by App Platform and hidden in its
+        # control panel. The provider marks every env `value` sensitive, so
+        # plans print none of them.
+        env {
+          key   = "SPRING_DATASOURCE_URL"
+          value = "jdbc:postgresql://${local.postgres.private_host}:${local.postgres.port}/${module.db[service.key].database}?sslmode=require"
+          scope = "RUN_TIME"
+          type  = "GENERAL"
+        }
+        env {
+          key   = "SPRING_DATASOURCE_USERNAME"
+          value = module.db[service.key].user
+          scope = "RUN_TIME"
+          type  = "GENERAL"
+        }
+        env {
+          key   = "SPRING_DATASOURCE_PASSWORD"
+          value = module.db[service.key].password
+          scope = "RUN_TIME"
+          type  = "SECRET"
+        }
+        # Sign-in: the API accepts tokens from the accounts service whose
+        # `aud` names the game. It checks them against the issuer's public
+        # keys (JWKS), so it needs no auth secrets.
+        env {
+          key   = "AUTH_ISSUER"
+          value = data.terraform_remote_state.accounts.outputs.issuer
+          scope = "RUN_TIME"
+          type  = "GENERAL"
+        }
+        env {
+          key   = "AUTH_AUDIENCE"
+          value = service.key
+          scope = "RUN_TIME"
+          type  = "GENERAL"
+        }
+      }
+    }
+
     # Routing: which component answers which path. App Platform sends each
     # request to the rule with the longest matching prefix, so "/match3/..."
     # goes to the match3 component and everything else falls through to "/".
     # The prefix is stripped before the request reaches the component:
     # "/match3/Build/x.wasm" is served as "/Build/x.wasm" from the match3 site.
     ingress {
+      # "/match3/api" is longer than "/match3", so API requests go to the API.
+      # Unlike the static sites, these rules keep the prefix
+      # (preserve_path_prefix): the API's context path is "/<key>/api", the
+      # same locally as in production, so its own links and the health check
+      # path are the same everywhere.
+      dynamic "rule" {
+        for_each = local.apis
+        content {
+          component {
+            name                 = "${rule.key}-api"
+            preserve_path_prefix = true
+          }
+          match {
+            path {
+              prefix = "/${rule.key}/api"
+            }
+          }
+        }
+      }
+
       dynamic "rule" {
         for_each = var.games
         content {

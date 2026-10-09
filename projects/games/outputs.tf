@@ -29,6 +29,11 @@ output "game_urls" {
   value       = { for key, game in var.games : key => "https://${local.hostname}/${key}/" }
 }
 
+output "api_urls" {
+  description = "Base URL of each game's API, for games that have one."
+  value       = { for key, api in local.apis : key => "https://${local.hostname}/${key}/api" }
+}
+
 output "downloads_bucket" {
   description = "Spaces bucket for downloadable builds; upload to <game key>/<file>."
   value       = digitalocean_spaces_bucket.downloads.name
