@@ -29,8 +29,11 @@ data "terraform_remote_state" "shared" {
 
 # The accounts service's outputs, for the issuer whose tokens game APIs accept.
 # Same bucket, accounts' key. Only the state has to exist, so this works as
-# long as projects/accounts has been applied once.
+# long as projects/accounts has been applied once. It's only read when some
+# game has an API (`count` of 1 or 0), so a hub without APIs doesn't depend on
+# accounts at all.
 data "terraform_remote_state" "accounts" {
+  count   = length(local.apis) > 0 ? 1 : 0
   backend = "s3"
 
   config = {
@@ -62,6 +65,11 @@ locals {
   # The games that declare an api, as { key => api }. A `for` expression with
   # an `if` filters a map; this drives the API components and their databases.
   apis = { for key, game in var.games : key => game.api if game.api != null }
+
+  # The sign-in issuer the APIs accept, or null when there are none. With
+  # `count`, the data source is a list; `[*]` makes a list of its outputs and
+  # `one()` turns a one- or zero-element list into its element or null.
+  issuer = one(data.terraform_remote_state.accounts[*].outputs.issuer)
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.
@@ -225,7 +233,7 @@ resource "digitalocean_app" "hub" {
         # keys (JWKS), so it needs no auth secrets.
         env {
           key   = "AUTH_ISSUER"
-          value = data.terraform_remote_state.accounts.outputs.issuer
+          value = local.issuer
           scope = "RUN_TIME"
           type  = "GENERAL"
         }

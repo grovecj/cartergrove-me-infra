@@ -182,24 +182,30 @@ e.g. a script in its web template that adds the missing slash.
 
 1. **Before merging:** `projects/accounts/` has been applied (its state holds
    the `issuer` output that `AUTH_ISSUER` comes from), and DigitalOcean's
-   GitHub app can see the API's repo (e.g. `grovecj/match-3-api`).
+   GitHub app can see the API's repo (e.g. `grovecj/match-3-api`). The hub
+   only reads accounts' state while some game has an API.
 2. **Apply.** It creates the database and user, then updates the hub app.
    The new deployment fails its health check, because Flyway can't create
    tables until the grant below exists, so the apply job fails at the app.
    That's expected and harmless: App Platform keeps the previous deployment
    live, so the hub and the games carry on as before.
 3. **Database grant.** As `doadmin`, connected to the game's database (see
-   [modules/README.md](modules/README.md#project-database)):
+   [modules/README.md](modules/README.md#project-database)), with `<key>`
+   replaced by the game's key:
 
    ```sql
-   GRANT CREATE ON SCHEMA public TO match3;
+   GRANT CREATE ON SCHEMA public TO "<key>";
    ```
+
+   For Match-3 that's `GRANT CREATE ON SCHEMA public TO "match3";`. The
+   double quotes keep the name exactly as written, which matters for keys
+   with a dash (`block-drop`): unquoted, Postgres reads the dash as a minus.
 
 4. **Deploy again.** Re-run the failed `apply (projects/games)` job and
    approve it. If its plan has no changes (the spec was saved even though
    the deployment failed), start a deployment yourself instead:
    `doctl apps create-deployment <app_id>`. Then check
-   `curl https://games.cartergrove.me/match3/api/actuator/health` says `UP`.
+   `curl https://games.cartergrove.me/<key>/api/actuator/health` says `UP`.
 
 ## Accounts (`projects/accounts/`)
 
