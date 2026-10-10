@@ -38,7 +38,7 @@
         "hide": false,
         "iconColor": "blue",
         "name": "Restarts",
-        "expr": "process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"} != process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"} offset 1m",
+        "expr": "max(process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"}) != max(process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"} offset 1m)",
         "step": "1m",
         "titleFormat": "$service restarted",
         "textFormat": "A new process took over (deploy or crash)."
@@ -815,7 +815,7 @@
       "id": 14,
       "type": "timeseries",
       "title": "Database connections",
-      "description": "The service's connection pool. Each service may hold 3 connections, because the shared Postgres cluster only allows about 22 in all. \"waiting\" above 0 means requests are queuing for a connection: the pool is full.",
+      "description": "The service's connection pool. Each service may hold 3 connections, because the shared Postgres cluster only allows about 22 in all. \"waiting\" above 0 means requests are queuing for a connection: the pool is full. During a deploy two copies run, each with its own pool; the busier one is shown.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -982,7 +982,7 @@
       "id": 15,
       "type": "timeseries",
       "title": "JVM heap",
-      "description": "Memory the JVM is using for objects, against the most it may take. A sawtooth is normal: it climbs until a garbage collection, then drops. Trouble is the bottom of the teeth creeping up to the maximum.",
+      "description": "Memory the JVM is using for objects, against the most it may take. A sawtooth is normal: it climbs until a garbage collection, then drops. Trouble is the bottom of the teeth creeping up to the maximum. During a deploy two copies run; the fuller one is shown.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1000,7 +1000,7 @@
             "uid": "grafanacloud-prom"
           },
           "editorMode": "code",
-          "expr": "sum(jvm_memory_used_bytes{service_name=\"$service\", deployment_environment=\"production\", area=\"heap\"})",
+          "expr": "max(sum by (instance) (jvm_memory_used_bytes{service_name=\"$service\", deployment_environment=\"production\", area=\"heap\"}))",
           "legendFormat": "used",
           "range": true,
           "refId": "A"
@@ -1011,7 +1011,7 @@
             "uid": "grafanacloud-prom"
           },
           "editorMode": "code",
-          "expr": "sum(jvm_memory_max_bytes{service_name=\"$service\", deployment_environment=\"production\", area=\"heap\"} > 0)",
+          "expr": "max(sum by (instance) (jvm_memory_max_bytes{service_name=\"$service\", deployment_environment=\"production\", area=\"heap\"} > 0))",
           "legendFormat": "maximum",
           "range": true,
           "refId": "B"
@@ -1237,7 +1237,7 @@
       "id": 19,
       "type": "timeseries",
       "title": "Process uptime",
-      "description": "How long the running process has been up. It drops to 0 when a new one starts: a deploy, or a crash and restart. Each drop is also drawn on every panel as a blue line (the \"Restarts\" annotation).",
+      "description": "How long the running process has been up. It drops to 0 when a new one starts: a deploy, or a crash and restart. While two copies run, the younger is shown. Each drop is also drawn on every panel as a blue line (the \"Restarts\" annotation).",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
