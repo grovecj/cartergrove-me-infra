@@ -276,7 +276,9 @@ resource "digitalocean_app" "hub" {
         # Monitoring: the API pushes its metrics to this OTLP endpoint,
         # sending the second value as its Authorization header. Every game
         # API gets the same pair: the token inside can only write telemetry
-        # (see monitoring/). With these unset an API sends nothing.
+        # (see monitoring/). With these unset an API sends nothing. The
+        # third labels everything it sends, so a run on someone's laptop
+        # ("local", the API's default) never mixes with this one's data.
         env {
           key   = "GRAFANA_OTLP_ENDPOINT"
           value = local.otlp_endpoint
@@ -288,6 +290,12 @@ resource "digitalocean_app" "hub" {
           value = local.otlp_authorization
           scope = "RUN_TIME"
           type  = "SECRET"
+        }
+        env {
+          key   = "DEPLOYMENT_ENVIRONMENT"
+          value = "production"
+          scope = "RUN_TIME"
+          type  = "GENERAL"
         }
       }
     }

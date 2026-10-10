@@ -119,7 +119,9 @@ get added here later.
     read check below.
 
   Projects pass the first two to their services as `GRAFANA_OTLP_ENDPOINT`
-  and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`).
+  and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`), plus
+  `DEPLOYMENT_ENVIRONMENT=production`, which the services attach to
+  everything they send (it's `local` when unset).
 
 ### Free-tier budget
 
@@ -235,7 +237,7 @@ rather than an app of its own.
     `AUTH_AUDIENCE` (the game key). The API checks tokens against the
     issuer's public keys, so it needs no auth secrets. For monitoring,
     `GRAFANA_OTLP_ENDPOINT` and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`),
-    from `monitoring/`'s state.
+    from `monitoring/`'s state, and `DEPLOYMENT_ENVIRONMENT` (`production`).
 
   Games without `api` get no service, route or database.
 - **Domain and TLS.** A `CNAME` record `games` → the app's
@@ -339,7 +341,8 @@ validates the tokens it issues. Discovery is at
   plus the `SECRET` ones: `SPRING_DATASOURCE_PASSWORD`, `GOOGLE_CLIENT_ID`,
   `GOOGLE_CLIENT_SECRET` and `AUTH_SIGNING_KEY_PEM`. For monitoring,
   `GRAFANA_OTLP_ENDPOINT` and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`), read
-  from `monitoring/`'s state like `shared/`'s outputs.
+  from `monitoring/`'s state like `shared/`'s outputs, and
+  `DEPLOYMENT_ENVIRONMENT` (`production`).
 - **Google OAuth client.** Variables `google_client_id` and
   `google_client_secret`, both `sensitive`. CI fills them from the
   `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets (see "One-time CI

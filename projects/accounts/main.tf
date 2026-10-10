@@ -199,7 +199,9 @@ resource "digitalocean_app" "accounts" {
       # Monitoring: the service pushes its metrics to this OTLP endpoint,
       # sending the second value as its Authorization header. That value
       # holds a token that can only write telemetry (see monitoring/). With
-      # these unset the service sends nothing.
+      # these unset the service sends nothing. The third labels everything
+      # it sends, so a run on someone's laptop ("local", the service's
+      # default) never mixes with this one's data.
       env {
         key   = "GRAFANA_OTLP_ENDPOINT"
         value = data.terraform_remote_state.monitoring.outputs.otlp_endpoint
@@ -211,6 +213,12 @@ resource "digitalocean_app" "accounts" {
         value = data.terraform_remote_state.monitoring.outputs.otlp_authorization
         scope = "RUN_TIME"
         type  = "SECRET"
+      }
+      env {
+        key   = "DEPLOYMENT_ENVIRONMENT"
+        value = "production"
+        scope = "RUN_TIME"
+        type  = "GENERAL"
       }
     }
 
