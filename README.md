@@ -238,6 +238,11 @@ It answers "are the services OK?" from top to bottom:
 - **Restarts are marked on every panel** (the blue lines, from the
   **Restarts** annotation): a spike that lines up with one is a deploy, not a
   mystery.
+- **A deploy is two copies for a minute or two.** Each running copy of a
+  service reports under its own `instance` label, so the old and new one
+  don't overwrite each other. Queries add the copies up where that's the
+  true total (requests) and take the larger where it isn't (heap, database
+  connections).
 - **It adds no series.** A dashboard only reads. Every query groups by labels
   the services already keep to short lists (`uri` is the route, `status` the
   code), so it can't grow the bill.
