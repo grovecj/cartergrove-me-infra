@@ -6,8 +6,9 @@
 #   push to main  -> a plan of every root module against what was merged, in
 #                    the run's summary, then apply for each root whose plan
 #                    has changes (via terraform-apply.yml): shared/ first,
-#                    then the projects. Each apply waits in the "production"
-#                    environment until a required reviewer approves it.
+#                    then monitoring/, then the projects. Each apply waits in
+#                    the "production" environment until a required reviewer
+#                    approves it.
 name: Terraform
 
 on:
@@ -100,6 +101,12 @@ jobs:
       # sensitive variables, so plans print "(sensitive value)", never them.
       TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
       TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      # Only monitoring/ uses these. The token is the grafana provider's
+      # credential (it manages Grafana Cloud, and is never given to a
+      # service). The stack slug isn't secret, so it's a repository
+      # *variable* (vars.*), which unlike a secret isn't masked in logs.
+      GRAFANA_CLOUD_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_CLOUD_ACCESS_POLICY_TOKEN }}
+      TF_VAR_grafana_stack_slug: ${{ vars.GRAFANA_STACK_SLUG }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
@@ -221,7 +228,8 @@ jobs:
         run: exit 1
 
   # After a merge, and only if every plan succeeded: which roots have changes
-  # to apply, as `shared` (true/false) and `projects` (a JSON array).
+  # to apply, as `shared` and `monitoring` (true/false) and `projects` (a JSON
+  # array).
   pending:
     needs: [changes, plan]
     if: github.event_name == 'push'
@@ -230,6 +238,7 @@ jobs:
       actions: read # to list this run's artifacts
     outputs:
       shared: ${{ steps.pending.outputs.shared }}
+      monitoring: ${{ steps.pending.outputs.monitoring }}
       projects: ${{ steps.pending.outputs.projects }}
     steps:
       - id: pending
@@ -239,19 +248,27 @@ jobs:
         run: |
           names=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[].name')
           shared=false
+          monitoring=false
           projects=()
           for root in $(jq -r '.[]' <<< "$ROOTS"); do
             grep -qx "pending-${root//\//-}" <<< "$names" || continue
-            if [ "$root" = shared ]; then shared=true; else projects+=("$root"); fi
+            case "$root" in
+              shared) shared=true ;;
+              monitoring) monitoring=true ;;
+              *) projects+=("$root") ;;
+            esac
           done
           projects=$(jq -cn '$ARGS.positional' --args "${projects[@]}")
-          echo "To apply: shared=$shared, projects=$projects"
+          echo "To apply: shared=$shared, monitoring=$monitoring, projects=$projects"
           echo "shared=$shared" >> "$GITHUB_OUTPUT"
+          echo "monitoring=$monitoring" >> "$GITHUB_OUTPUT"
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
 
   # shared/ goes first as its own job, because projects read its outputs; the
-  # projects' job needs it, so it can't start before shared/ is applied (or
-  # skipped, when it has no changes).
+  # jobs after it need it, so they can't start before shared/ is applied (or
+  # skipped, when it has no changes). monitoring/ is next, for the same
+  # reason: projects read its outputs too (the OTLP endpoint and credentials
+  # their services send telemetry with).
   apply-shared:
     needs: pending
     if: needs.pending.outputs.shared == 'true'
@@ -260,7 +277,7 @@ jobs:
       roots: '["shared"]'
     secrets: inherit
 
-  apply-projects:
+  apply-monitoring:
     needs: [pending, apply-shared]
     # !cancelled() lets this run when apply-shared was skipped (a skipped
     # dependency would otherwise skip this job too); the result checks stop
@@ -268,8 +285,23 @@ jobs:
     if: >-
       !cancelled()
       && needs.pending.result == 'success'
+      && needs.pending.outputs.monitoring == 'true'
+      && contains(fromJSON('["success", "skipped"]'), needs.apply-shared.result)
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      roots: '["monitoring"]'
+    secrets: inherit
+
+  apply-projects:
+    needs: [pending, apply-shared, apply-monitoring]
+    # Same as apply-monitoring: run when the jobs before it succeeded or were
+    # skipped, never when one failed.
+    if: >-
+      !cancelled()
+      && needs.pending.result == 'success'
       && needs.pending.outputs.projects != '[]'
       && contains(fromJSON('["success", "skipped"]'), needs.apply-shared.result)
+      && contains(fromJSON('["success", "skipped"]'), needs.apply-monitoring.result)
     uses: ./.github/workflows/terraform-apply.yml
     with:
       roots: ${{ needs.pending.outputs.projects }}

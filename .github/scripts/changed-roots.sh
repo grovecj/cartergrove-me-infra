@@ -18,7 +18,8 @@ head="$2"
 # Root modules are the directories whose versions.tf declares a backend.
 # Plain modules under modules/ have a versions.tf too, but no backend.
 # "shared" is listed first, since projects read its outputs; the workflow
-# applies it in its own job before them.
+# applies it in its own job before them. (It applies "monitoring" before the
+# projects too, picking it out by name, so its place in this list is free.)
 mapfile -t all_roots < <(
   git ls-files '*versions.tf' | while read -r file; do
     if grep -q 'backend "' "$file"; then dirname "$file"; fi
