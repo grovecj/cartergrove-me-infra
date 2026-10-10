@@ -348,7 +348,7 @@ too, with a web build's `index.html` at its root.
 
 1. Add an entry to `var.games`: `<key> = { repo = "owner/name", branch = "..." }`.
    The key becomes the path (`/<key>/`), the component name and the downloads
-   prefix: lowercase letters, digits and dashes.
+   prefix: 2-28 lowercase letters, digits and dashes.
 2. Add a link to `/<key>/` in `projects/games/hub/index.html`, plus a link to
    its download on the CDN (`downloads_cdn_url`/`<key>/...`) if it has one.
 3. Grant DigitalOcean's GitHub app access to the repo (see above), then `terraform apply`.
@@ -358,8 +358,9 @@ They count against a monthly allowance, so look at the budget table under
 "Uptime checks" first.
 
 For a game with an `api`, also grant the GitHub app access to the API's repo,
-and see "One-time: a game API's first apply" below. Keys of games with an API
-can be at most 28 characters, so `<key>-api` fits App Platform's 32.
+and see "One-time: a game API's first apply" below. Keys stop at 28
+characters so that `<key>-api` and `<key>-web` fit in 32: App Platform's limit
+for a component name, and Grafana's for the `service` label on a check.
 
 **Link with a trailing slash** (`/match3/`, not `/match3`). A Unity web build
 loads `Build/...` relative to the page, and relative to `/match3` that's

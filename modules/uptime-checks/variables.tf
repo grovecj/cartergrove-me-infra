@@ -50,4 +50,10 @@ variable "timeout_seconds" {
   description = "How long a check waits for the response before it counts as failed."
   type        = number
   default     = 10
+
+  # Grafana accepts 1 to 180 seconds (timeout is 1,000 to 180,000 ms).
+  validation {
+    condition     = var.timeout_seconds >= 1 && var.timeout_seconds <= 180 && floor(var.timeout_seconds) == var.timeout_seconds
+    error_message = "timeout_seconds must be a whole number from 1 to 180."
+  }
 }

@@ -33,7 +33,7 @@ point it at public, read-only URLs.
 | `checks` | (required) | map of name => `{ url, service, body_must_match }` |
 | `probe` | `"Ohio"` | the one probe location that runs them |
 | `frequency_minutes` | `5` | every check, from that location |
-| `timeout_seconds` | `10` | |
+| `timeout_seconds` | `10` | 1 to 180 |
 
 | Output | |
 | --- | --- |
