@@ -1,6 +1,7 @@
 # Applies a list of root modules. Not triggered on its own: terraform.yml
-# calls it (a "reusable workflow") once for shared/ and then once for the
-# projects, so shared/ is always applied before the projects that read it.
+# calls it (a "reusable workflow") once for shared/, once for monitoring/ and
+# then once for the projects, so both are always applied before the projects
+# that read them.
 name: Terraform apply
 
 on:
@@ -53,6 +54,8 @@ jobs:
       TF_VAR_postgres_trusted_ips: ${{ secrets.POSTGRES_TRUSTED_IPS || '[]' }}
       TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
       TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GRAFANA_CLOUD_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_CLOUD_ACCESS_POLICY_TOKEN }}
+      TF_VAR_grafana_stack_slug: ${{ vars.GRAFANA_STACK_SLUG }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

@@ -1,14 +1,15 @@
 # cartergrove-me-infra
 
 Terraform for the DigitalOcean infrastructure behind every `*.cartergrove.me`
-project (games.cartergrove.me, stats.cartergrove.me, ...). Keeping it in one
-repo lets projects share resources, like one managed Postgres cluster, without
-stepping on each other.
+project (games.cartergrove.me, stats.cartergrove.me, ...), and for the Grafana
+Cloud stack that monitors it. Keeping it in one repo lets projects share
+resources, like one managed Postgres cluster, without stepping on each other.
 
 ## Layout
 
 ```
 shared/            # root module: DNS zone, VPC, shared Postgres cluster, ...
+monitoring/        # root module: Grafana Cloud (credentials services push telemetry with)
 projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
     hub/           # the hub's landing page, served at "/"
@@ -31,6 +32,7 @@ in. It has its own backend and therefore its own state file, so `apply` in
 | Root module | State key |
 | --- | --- |
 | `shared/` | `shared/terraform.tfstate` |
+| `monitoring/` | `monitoring/terraform.tfstate` |
 | `projects/games/` | `projects/games/terraform.tfstate` |
 | `projects/accounts/` | `projects/accounts/terraform.tfstate` |
 | `projects/beach/` | `projects/beach/terraform.tfstate` |
@@ -39,7 +41,8 @@ in. It has its own backend and therefore its own state file, so `apply` in
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
 "shared"` block. `shared/outputs.tf` is the contract: projects should rely only
-on what it exports.
+on what it exports. `monitoring/` works the same way: it reads nothing from
+`shared/`, but projects read its outputs (see "Monitoring" below).
 
 ## Shared resources
 
@@ -78,6 +81,112 @@ after transferring the domain. Check it with `nslookup -type=NS cartergrove.me`.
 The zone already existed in DigitalOcean before Terraform, so `shared/main.tf`
 *imports* it (an `import` block) instead of creating it. The first
 `terraform plan` shows `1 to import`.
+
+## Monitoring (`monitoring/`)
+
+Health monitoring for the services (tracking issue:
+[grovecj/Match-3#92](https://github.com/grovecj/Match-3/issues/92)) runs on
+[Grafana Cloud](https://grafana.com/products/cloud/)'s free tier. This root
+module is the plumbing: it doesn't monitor anything yet, it makes the
+credentials services send telemetry with. Dashboards, uptime checks and alerts
+get added here later.
+
+- **Push, not scrape.** The usual Prometheus setup *pulls*: a collector
+  scrapes a `/metrics` endpoint on every service. App Platform has nowhere to
+  run a collector, and we don't want `/actuator/prometheus` on a public
+  route. So each service *pushes* over OTLP (the OpenTelemetry Protocol:
+  HTTP POSTs of metrics, logs or traces) to the stack's OTLP gateway,
+  `https://otlp-gateway-<zone>.grafana.net/otlp`.
+- **One stack, read not created.** The free tier includes one stack, made at
+  sign-up. `data "grafana_cloud_stack"` looks it up by its slug
+  (`var.grafana_stack_slug`); Terraform can't change or delete it.
+- **Two credentials, on purpose.**
+
+  | Credential | Can | Lives |
+  | --- | --- | --- |
+  | Terraform's token (`GRAFANA_CLOUD_ACCESS_POLICY_TOKEN`) | manage access policies and tokens | your shell, CI secrets. Made by hand: [bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring) |
+  | Services' token (`grafana_cloud_access_policy_token.services_write`) | only `metrics:write`, `logs:write`, `traces:write`, only on this stack | this root's state, and each service's `GRAFANA_OTLP_AUTHORIZATION` env var. Made by Terraform |
+
+  A service is the likelier place for a leak (logs, a debug endpoint, a
+  dependency). Its token can add junk data and nothing else: it can't read
+  what was sent, open Grafana, or make more tokens.
+- **Outputs**, the contract with the projects:
+  - `otlp_endpoint`: the gateway's base URL. Clients add `/v1/metrics`,
+    `/v1/logs` or `/v1/traces`.
+  - `otlp_authorization` (sensitive): the whole `Authorization` header value,
+    `Basic base64(<stack id>:<token>)`. base64 is an encoding, not
+    encryption, so treat it exactly like the token. **`sensitive` stops at
+    this root's edge.** Read through `terraform_remote_state`, the value
+    arrives as a plain string that a plan prints in full, and plan comments
+    here are public. A project that reads it must wrap it in `sensitive(...)`
+    on the spot.
+  - `prometheus`: the metrics query URL and user id. Not secret; used for the
+    read check below.
+
+  Projects pass the first two to their services as `GRAFANA_OTLP_ENDPOINT`
+  and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`).
+
+### Free-tier budget
+
+What everything here has to fit in, as of October 2026 (they move: check
+[grafana.com/pricing](https://grafana.com/pricing/) before relying on one):
+
+| What | Limit |
+| --- | --- |
+| Metrics | 10,000 active series, across **all** services |
+| Logs, traces | 50 GB ingested a month, each |
+| Retention | 14 days, for metrics, logs and traces |
+| Synthetic (uptime) checks | 100,000 API check runs a month (plus 10,000 browser ones) |
+| Users | 3 active a month |
+
+Two of these shape the design. An *active series* is one metric name with one
+combination of label values, so a label with unbounded values (a raw URL, a
+user id) can eat the 10k by itself. And 100k check runs a month is about one
+check a minute for two targets (a month has ~43,800 minutes), so checks have
+to be fewer or slower than that.
+
+### One-time: first apply
+
+1. **Account, token, secrets** exist ([bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring)).
+   Without them the plan fails on purpose (`grafana_stack_slug is empty`), or
+   with an authentication error from Grafana.
+2. **Apply** `monitoring/`, by merging (it's applied after `shared/`, before
+   the projects) or locally. The plan is 2 to add: the policy and its token.
+3. **Check the token can write but not read.** Locally, in `monitoring/`
+   (bash, with `jq`; don't run this in CI, it handles the secret):
+
+   ```bash
+   # Write: send one made-up data point. Expect 200.
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST "$(terraform output -raw otlp_endpoint)/v1/metrics" \
+     -H "Authorization: $(terraform output -raw otlp_authorization)" \
+     -H 'Content-Type: application/json' \
+     -d '{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"curl-test"}}]},"scopeMetrics":[{"metrics":[{"name":"curl_test","gauge":{"dataPoints":[{"asInt":"1","timeUnixNano":"'"$(date +%s)"'000000000"}]}}]}]}]}'
+
+   # Read: query metrics with the same token. Expect 401 or 403.
+   token=$(terraform output -raw otlp_authorization | cut -d' ' -f2 | base64 -d | cut -d: -f2)
+   curl -s -o /dev/null -w '%{http_code}\n' -u "$(terraform output -json prometheus | jq -r .user_id):$token" \
+     "$(terraform output -json prometheus | jq -r .url)/api/prom/api/v1/query?query=up"
+   ```
+
+   The `curl_test` series shows up in the stack's **Explore** (pick the
+   Prometheus data source) and ages out by itself.
+4. **Then** merge the change that makes the projects read these outputs. A
+   project's plan fails with `Unable to find remote state` until
+   `monitoring/terraform.tfstate` exists, which is why that's a separate,
+   later change.
+
+### Rotating the services' token
+
+```bash
+cd monitoring
+terraform apply -replace=grafana_cloud_access_policy_token.services_write
+```
+
+Then apply `projects/accounts` and `projects/games`, which redeploys the
+services with the new value. The old token stops working as soon as it's
+replaced, so until that redeploy the services' pushes are refused (they log
+it and carry on; only telemetry is lost). As with the signing key, there's no
+`-replace` in CI: run it locally, and don't let it overlap a CI apply.
 
 ## Games hub (`projects/games/`)
 
@@ -381,8 +490,9 @@ the server (`docker compose down` in `/opt/minecraft`), copy the world into
   resources go in the hand-made `cartergrove.me` project, which Terraform
   only reads (a `data` source) and doesn't manage.
 - **Versions:** Terraform `~> 1.14` and provider `digitalocean/digitalocean`
-  `~> 2.102`. The exact provider build is pinned by each root module's
-  committed `.terraform.lock.hcl` (hashes for Windows, Linux and macOS arm64).
+  `~> 2.102` (`monitoring/` uses `grafana/grafana` `~> 4.49` instead). The
+  exact provider build is pinned by each root module's committed
+  `.terraform.lock.hcl` (hashes for Windows, Linux and macOS arm64).
 - **Secrets:** credentials come from environment variables only. State,
   `*.tfvars` and saved plans are git-ignored. State can contain secrets (e.g.
   database passwords), so it lives only in the private bucket.
@@ -401,7 +511,8 @@ terraform plan       # preview changes
 terraform apply      # shows the plan again and asks before changing anything
 ```
 
-Apply `shared/` before any project that reads its outputs.
+Apply order: `shared/`, then `monitoring/`, then the projects, because
+projects read the outputs of the first two.
 
 ## CI: plan and apply
 
@@ -421,9 +532,10 @@ changed.
 **Approving an apply.** The apply jobs use the `production` environment, which
 requires a reviewer. After a merge, open the run (**Actions → Terraform**),
 read the plans in its summary, then **Review deployments → Approve and
-deploy**. `shared` is applied first, as its own job, because projects read
-its outputs. The projects' applies only start after it succeeds (or when
-`shared` has no changes). Only approve after reading the plan.
+deploy**. `shared` is applied first, as its own job, then `monitoring`,
+because projects read the outputs of both. The projects' applies only start
+after those succeed (or when they have no changes). Only approve after
+reading the plan.
 
 The apply job plans once more and applies exactly that saved plan. It can't
 reuse the plan you read: a saved plan can contain secrets, and a public repo's
@@ -461,6 +573,11 @@ while one is running in CI.
    **and** as `production` environment secrets. The workflows pass them as
    `TF_VAR_google_client_id` / `TF_VAR_google_client_secret`. Without them,
    the accounts plan fails with "google_client_id is empty".
+
+   For `monitoring/`, add the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` secret
+   (repository **and** `production`) and the `GRAFANA_STACK_SLUG` repository
+   *variable*, from bootstrap step 7. The provider reads the token from the
+   environment; the slug is passed as `TF_VAR_grafana_stack_slug`.
 2. **The `production` environment**, before the first merge. A workflow that
    names an environment that doesn't exist creates it *without* protection,
    and the apply would run unapproved. Under **Settings → Environments → New

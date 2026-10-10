@@ -110,6 +110,7 @@ terraform plan      # reads shared's outputs via terraform_remote_state
 
 `shared/` must be applied at least once before any project can `plan`:
 `terraform_remote_state` fails if `shared/terraform.tfstate` doesn't exist yet.
+The same goes for `monitoring/` (step 7) and the projects that read it.
 
 ## 6. Google OAuth client (accounts)
 
@@ -152,6 +153,49 @@ which Terraform can't create. Do this once before the first accounts apply.
 This repo is public: never paste these values into an issue, PR, commit or
 `.tfvars` file. Terraform treats them as sensitive and prints
 `(sensitive value)` in plans.
+
+## 7. Grafana Cloud account and Terraform token (monitoring)
+
+`monitoring/` manages Grafana Cloud, which is a separate service with its own
+account. Terraform can't sign up for you, and it needs a credential before it
+can do anything, so both are made by hand, once.
+
+1. Sign up at [grafana.com](https://grafana.com/auth/sign-up/create-user)
+   (free tier, no credit card). Sign-up creates an **organization** and, in
+   it, one **stack**: a Grafana instance at `https://<slug>.grafana.net` with
+   its own metrics, logs and traces databases. The free tier allows one stack,
+   so Terraform reads this one instead of creating its own. Note the `<slug>`.
+2. In the [Cloud Portal](https://grafana.com/orgs) (grafana.com, not your
+   stack's Grafana) → **Security → Access Policies → Create access policy**:
+   - Name `terraform`, realm **all stacks** (the organization).
+   - Scopes: `stacks:read`, `accesspolicies:read`, `accesspolicies:write`,
+     `accesspolicies:delete`. That's what `monitoring/` needs today: read the
+     stack, and manage the write-only policy and token the services use.
+     Scopes that aren't in the tick-box list are under **Add scope**. Later
+     monitoring issues need more (e.g. `stack-service-accounts:write` for
+     dashboards and alerts); add them to this policy then. Existing tokens
+     pick up a policy's new scopes, so the token below stays the same.
+3. On that policy, **Add token**. Name it `terraform-ci`, pick an expiry you'll
+   remember to renew, and copy the token (`glc_...`): it's shown once.
+4. Store it as the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` secret on this repo,
+   both as a repository secret and as a `production` environment secret, like
+   the Google ones in step 6. Add the slug from step 1 as a repository
+   **variable** (the **Variables** tab next to Secrets) named
+   `GRAFANA_STACK_SLUG`. It's a variable because it isn't secret: it's in your
+   Grafana URL.
+
+   For a local plan/apply of `monitoring/`, export them like the other
+   credentials in step 4:
+
+   ```powershell
+   $env:GRAFANA_CLOUD_ACCESS_POLICY_TOKEN = "glc_..."
+   $env:TF_VAR_grafana_stack_slug         = "<slug>"
+   ```
+
+This token is the **administrator** credential: with it you can mint tokens
+that read or write anything in the stack. Only Terraform uses it. The services
+never see it; they get a separate token that can only write telemetry (see
+"Monitoring" in the main README).
 
 ## Note: no state locking
 
