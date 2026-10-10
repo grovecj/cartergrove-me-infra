@@ -1,0 +1,85 @@
+#cloud-config
+
+# Runs once, on the Droplet's first boot (see user_data in main.tf). Terraform's
+# templatefile() fills in the repo and branch placeholders in the clone step
+# below before the Droplet ever sees this file. Every other "$" is plain shell.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - ufw
+
+write_files:
+  - path: /etc/cron.daily/minecraft-backup
+    content: |
+      #!/bin/bash
+      # Daily Minecraft world backup (keeps last 7 days)
+      BACKUP_DIR="/opt/minecraft/backups"
+      DATE=$(date +%Y-%m-%d)
+      mkdir -p "$BACKUP_DIR"
+
+      # Pause autosaving so the world's files can't change while tar reads
+      # them, which could leave an archive that doesn't load. The trap turns
+      # it back on however this script ends, even if tar fails. If the server
+      # isn't running these commands fail quietly, and the files are at rest.
+      docker exec minecraft rcon-cli save-off >/dev/null 2>&1 || true
+      trap 'docker exec minecraft rcon-cli save-on >/dev/null 2>&1 || true' EXIT
+
+      # Write everything in memory to disk; "flush" waits until it's done
+      docker exec minecraft rcon-cli save-all flush >/dev/null 2>&1 || true
+
+      # Create backup
+      tar -czf "$BACKUP_DIR/world-$DATE.tar.gz" -C /opt/minecraft/data world 2>/dev/null || true
+
+      # Remove backups older than 7 days
+      find "$BACKUP_DIR" -name "world-*.tar.gz" -mtime +7 -delete 2>/dev/null || true
+    owner: root:root
+    permissions: "0755"
+
+  # Files in /etc/sysctl.d are applied on every boot. A plain `sysctl` command
+  # only lasts until the next reboot, unlike the swap file, which /etc/fstab
+  # brings back.
+  - path: /etc/sysctl.d/99-swappiness.conf
+    content: |
+      # Only swap when memory is nearly full (default 60): the server's Java
+      # heap is slow if it gets swapped out.
+      vm.swappiness = 10
+    owner: root:root
+    permissions: "0644"
+
+runcmd:
+  # Install Docker
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+  # Enable Docker
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Configure swap (2GB - important for small droplets)
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  # Apply the swappiness setting from write_files now, without a reboot
+  - sysctl -p /etc/sysctl.d/99-swappiness.conf
+
+  # Fetch the server's config (docker-compose.yml and the Caddyfile). The repo
+  # is public, so no credentials are needed. Later changes arrive through that
+  # repo's own Deploy workflow, which copies both files here over SSH.
+  - git clone --depth 1 --branch ${branch} https://github.com/${repo}.git /opt/minecraft
+
+  # Create backup directory
+  - mkdir -p /opt/minecraft/backups
+
+  # Start Minecraft server
+  - cd /opt/minecraft && docker compose up -d

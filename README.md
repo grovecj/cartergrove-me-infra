@@ -14,6 +14,7 @@ projects/
     hub/           # the hub's landing page, served at "/"
   accounts/        # root module: auth.cartergrove.me sign-in service + its database
   beach/           # root module: beach.cartergrove.me live cam page
+  minecraft/       # root module: minecraft.cartergrove.me server (a Droplet)
 modules/           # reusable building blocks, called from root modules
 bootstrap/         # one-time manual setup (state bucket, credentials)
 ```
@@ -33,6 +34,7 @@ in. It has its own backend and therefore its own state file, so `apply` in
 | `projects/games/` | `projects/games/terraform.tfstate` |
 | `projects/accounts/` | `projects/accounts/terraform.tfstate` |
 | `projects/beach/` | `projects/beach/terraform.tfstate` |
+| `projects/minecraft/` | `projects/minecraft/terraform.tfstate` |
 
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
@@ -313,6 +315,61 @@ City Beach, kept in the private repo
 GitHub app (see "One-time: GitHub access" above). The repo is private, so
 App Platform can't see it otherwise, and the apply fails with
 `GitHub user not authenticated`.
+
+## Minecraft (`projects/minecraft/`)
+
+`minecraft.cartergrove.me` is a Paper Minecraft server for Java and Bedrock
+players, with a BlueMap web map at `https://minecraft.cartergrove.me`. What
+runs on the machine (`docker-compose.yml`, the `Caddyfile`, the plugin list)
+lives in [grovecj/minecraft-server](https://github.com/grovecj/minecraft-server).
+This project only builds the machine. It was moved here from that repo's
+`terraform/` folder, which kept its state on one laptop.
+
+- **Droplet** `minecraft-server`: Ubuntu 24.04, `s-2vcpu-4gb` (`var.size`),
+  **$24/month** at the time of writing. It's the one project on a Droplet
+  instead of App Platform, which only routes HTTP: Minecraft needs its own
+  ports. It sits in the region's default VPC, not the shared one, because it
+  has SSH open to the internet and needs no database.
+- **First boot.** [`cloud-init.yml`](projects/minecraft/cloud-init.yml)
+  installs Docker, adds 2 GB of swap and a daily world backup (kept 7 days,
+  on the same disk), clones `var.repo` to `/opt/minecraft` and runs
+  `docker compose up -d`. The repo must be public, since the clone has no
+  credentials. cloud-init runs **only** on a Droplet's first boot, so editing
+  the file changes nothing on a running server (`ignore_changes = [user_data]`
+  keeps Terraform from rebuilding it). Later config changes go through the
+  server repo's own Deploy workflow.
+- **Firewall** `minecraft-firewall`: inbound SSH (22), Java (25565), Bedrock
+  (19132/udp) and HTTP/HTTPS (80, 443) from anywhere; everything outbound.
+- **DNS.** An `A` record `minecraft` → the Droplet's IP. Caddy on the Droplet
+  gets the TLS certificate itself once the record resolves.
+- **Outputs:** `hostname`, `bluemap_url`, `droplet_id`, `droplet_ip`,
+  `ssh_command`.
+
+The Droplet has `prevent_destroy`: the world is on its disk
+(`/opt/minecraft/data`), so Terraform refuses any plan that would delete it.
+Resizing (`var.size`) is done in place, with a short power-off. Changing the
+image or region replaces the Droplet, so back the world up first.
+
+### One-time: the first apply
+
+The old Droplet is gone, but its firewall and `A` record were left behind.
+`main.tf` *imports* both (`import` blocks, as `shared/` does for the DNS zone)
+instead of making duplicates, so the first plan reads
+`2 to import, 2 to add, 2 to change`: the Droplet and the DO Project are new,
+and the firewall and the record are pointed at the new Droplet.
+
+1. **SSH key.** The account has a key named `1PASSWORD-DigitalOcean`
+   (`var.ssh_key_name`). Check with `doctl compute ssh-key list`.
+2. **Apply.** The Droplet is up within a minute. cloud-init then takes a few
+   more to install Docker and start the server; follow it with
+   `ssh root@<droplet_ip> cloud-init status --wait`.
+3. **Server repo secret.** In grovecj/minecraft-server, set the `SERVER_HOST`
+   Actions secret to `minecraft.cartergrove.me` (it held the old Droplet's
+   IP), so its Deploy workflow reaches the new one.
+
+The new Droplet starts with a **fresh world**. To bring an old one back, stop
+the server (`docker compose down` in `/opt/minecraft`), copy the world into
+`/opt/minecraft/data/world`, and start it again.
 
 ## Conventions
 
