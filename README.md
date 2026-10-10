@@ -70,9 +70,7 @@ on what it exports. `monitoring/outputs.tf` is the same kind of contract
   one trusted-source list per cluster (see the module README).
 
 The zone and the cluster have `prevent_destroy`: Terraform refuses any plan that
-would delete them. To really delete one, remove that line first. (The
-cluster's is switched off for its one-time move from nyc3 to nyc1, which
-replaces it; switch it back on after that apply.)
+would delete them. To really delete one, remove that line first.
 
 ### DNS: nameservers (one-time, done)
 
@@ -400,8 +398,8 @@ locally (don't let it overlap a CI apply).
    tables until the grant below exists. That's expected: the database and
    user already exist, but the apply fails at the app. Terraform marks the
    app *tainted* and skips what depends on it (the `auth` CNAME, the DO
-   Project). After this, turn `prevent_destroy` on the cluster back on
-   (`shared/main.tf`).
+   Project). (`prevent_destroy` on the cluster was off for this move and is
+   back on now.)
 4. **Database grant.** As `doadmin`, connected to the `accounts` database (see
    [modules/README.md](modules/README.md#project-database)):
 
