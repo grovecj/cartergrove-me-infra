@@ -1,0 +1,67 @@
+#cloud-config
+
+# Runs once, on the Droplet's first boot (see user_data in main.tf). Terraform's
+# templatefile() fills in the repo and branch placeholders in the clone step
+# below before the Droplet ever sees this file. Every other "$" is plain shell.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - ufw
+
+write_files:
+  - path: /etc/cron.daily/minecraft-backup
+    content: |
+      #!/bin/bash
+      # Daily Minecraft world backup (keeps last 7 days)
+      BACKUP_DIR="/opt/minecraft/backups"
+      DATE=$(date +%Y-%m-%d)
+      mkdir -p "$BACKUP_DIR"
+
+      # Tell server to save
+      docker exec minecraft rcon-cli save-all 2>/dev/null || true
+      sleep 5
+
+      # Create backup
+      tar -czf "$BACKUP_DIR/world-$DATE.tar.gz" -C /opt/minecraft/data world 2>/dev/null || true
+
+      # Remove backups older than 7 days
+      find "$BACKUP_DIR" -name "world-*.tar.gz" -mtime +7 -delete 2>/dev/null || true
+    owner: root:root
+    permissions: "0755"
+
+runcmd:
+  # Install Docker
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+  # Enable Docker
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Configure swap (2GB - important for small droplets)
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl vm.swappiness=10
+
+  # Fetch the server's config (docker-compose.yml and the Caddyfile). The repo
+  # is public, so no credentials are needed. Later changes arrive through that
+  # repo's own Deploy workflow, which copies both files here over SSH.
+  - git clone --depth 1 --branch ${branch} https://github.com/${repo}.git /opt/minecraft
+
+  # Create backup directory
+  - mkdir -p /opt/minecraft/backups
+
+  # Start Minecraft server
+  - cd /opt/minecraft && docker compose up -d
