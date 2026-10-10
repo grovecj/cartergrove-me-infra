@@ -115,12 +115,17 @@ resource "grafana_synthetic_monitoring_installation" "main" {
 # program instead of a person. It doesn't count towards the free tier's 3
 # users. See providers.tf for how its token is used.
 #
-# Editor can create and change folders and dashboards, and can't manage users,
-# data sources or other service accounts.
+# Admin, because Editor isn't enough: an Editor may create a folder, but its
+# right to read one is granted folder by folder, and Grafana refused to let
+# this account read back the folder it had just made (403, "Permissions
+# needed: folders:read"). An Admin can read every folder. It's also what the
+# alert rules' contact points will need. It does make the token below worth
+# more to a thief (an Admin can change anything in this Grafana), so it stays
+# where it is: only in this root's state, in the private bucket.
 resource "grafana_cloud_stack_service_account" "terraform" {
   stack_slug = data.grafana_cloud_stack.main.slug
   name       = "terraform"
-  role       = "Editor"
+  role       = "Admin"
 }
 
 # Never expires, like the services' token. To rotate it:
