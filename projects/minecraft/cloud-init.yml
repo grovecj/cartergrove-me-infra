@@ -22,9 +22,15 @@ write_files:
       DATE=$(date +%Y-%m-%d)
       mkdir -p "$BACKUP_DIR"
 
-      # Tell server to save
-      docker exec minecraft rcon-cli save-all 2>/dev/null || true
-      sleep 5
+      # Pause autosaving so the world's files can't change while tar reads
+      # them, which could leave an archive that doesn't load. The trap turns
+      # it back on however this script ends, even if tar fails. If the server
+      # isn't running these commands fail quietly, and the files are at rest.
+      docker exec minecraft rcon-cli save-off >/dev/null 2>&1 || true
+      trap 'docker exec minecraft rcon-cli save-on >/dev/null 2>&1 || true' EXIT
+
+      # Write everything in memory to disk; "flush" waits until it's done
+      docker exec minecraft rcon-cli save-all flush >/dev/null 2>&1 || true
 
       # Create backup
       tar -czf "$BACKUP_DIR/world-$DATE.tar.gz" -C /opt/minecraft/data world 2>/dev/null || true
@@ -33,6 +39,17 @@ write_files:
       find "$BACKUP_DIR" -name "world-*.tar.gz" -mtime +7 -delete 2>/dev/null || true
     owner: root:root
     permissions: "0755"
+
+  # Files in /etc/sysctl.d are applied on every boot. A plain `sysctl` command
+  # only lasts until the next reboot, unlike the swap file, which /etc/fstab
+  # brings back.
+  - path: /etc/sysctl.d/99-swappiness.conf
+    content: |
+      # Only swap when memory is nearly full (default 60): the server's Java
+      # heap is slow if it gets swapped out.
+      vm.swappiness = 10
+    owner: root:root
+    permissions: "0644"
 
 runcmd:
   # Install Docker
@@ -53,7 +70,8 @@ runcmd:
   - mkswap /swapfile
   - swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  - sysctl vm.swappiness=10
+  # Apply the swappiness setting from write_files now, without a reboot
+  - sysctl -p /etc/sysctl.d/99-swappiness.conf
 
   # Fetch the server's config (docker-compose.yml and the Caddyfile). The repo
   # is public, so no credentials are needed. Later changes arrive through that
