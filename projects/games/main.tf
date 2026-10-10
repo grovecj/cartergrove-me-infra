@@ -94,9 +94,14 @@ locals {
   issuer = one(data.terraform_remote_state.accounts[*].outputs.issuer)
 
   # Where the APIs push telemetry, and the Authorization header value to send
-  # with it (sensitive: it holds a token). Null when there are no APIs.
+  # with it. Null when there are no APIs. The header value holds a token, and
+  # it's a sensitive output in monitoring/, but that marking is lost on the
+  # way through terraform_remote_state: here it's a plain string that a plan
+  # would print. sensitive() marks it again, so anything built from this
+  # local shows as "(sensitive value)". Always use the local, never the data
+  # source's attribute directly.
   otlp_endpoint      = one(data.terraform_remote_state.monitoring[*].outputs.otlp_endpoint)
-  otlp_authorization = one(data.terraform_remote_state.monitoring[*].outputs.otlp_authorization)
+  otlp_authorization = sensitive(one(data.terraform_remote_state.monitoring[*].outputs.otlp_authorization))
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.

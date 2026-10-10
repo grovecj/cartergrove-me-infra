@@ -55,6 +55,14 @@ locals {
   domain   = data.terraform_remote_state.shared.outputs.domain
   postgres = data.terraform_remote_state.shared.outputs.postgres
 
+  # The Authorization header value services push telemetry with. It holds a
+  # token, and it's a sensitive output in monitoring/, but that marking is
+  # lost on the way through terraform_remote_state: here it's a plain string
+  # that a plan would print. sensitive() marks it again, so anything built
+  # from this local shows as "(sensitive value)". Always use the local, never
+  # the data source's attribute directly.
+  otlp_authorization = sensitive(data.terraform_remote_state.monitoring.outputs.otlp_authorization)
+
   # "auth", not "accounts": the hostname is what users see when they sign in.
   hostname = "auth.${local.domain}"
   issuer   = "https://${local.hostname}"
@@ -210,7 +218,7 @@ resource "digitalocean_app" "accounts" {
       }
       env {
         key   = "GRAFANA_OTLP_AUTHORIZATION"
-        value = data.terraform_remote_state.monitoring.outputs.otlp_authorization
+        value = local.otlp_authorization
         scope = "RUN_TIME"
         type  = "SECRET"
       }

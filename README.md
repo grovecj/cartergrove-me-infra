@@ -41,7 +41,9 @@ in. It has its own backend and therefore its own state file, so `apply` in
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
 "shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s
-(`otlp_endpoint`, `otlp_authorization`) the same way. `shared/outputs.tf` is the contract: projects should rely only
+(`otlp_endpoint`, `otlp_authorization`) the same way, wrapping the second in
+`sensitive(...)`: an output's `sensitive` marking doesn't survive the trip
+through remote state (see "Monitoring"). `shared/outputs.tf` is the contract: projects should rely only
 on what it exports. `monitoring/outputs.tf` is the same kind of contract
 (see "Monitoring" below); `monitoring/` itself reads nothing from `shared/`.
 
