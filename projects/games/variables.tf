@@ -33,19 +33,14 @@ variable "games" {
   }
 
   # App Platform component names: 2-32 lowercase letters, digits and dashes,
-  # starting with a letter. "hub" is taken by the landing page.
+  # starting with a letter. "hub" is taken by the landing page. Keys stop at
+  # 28 so the names built from them fit in 32 too: the API component
+  # "<key>-api", and the uptime checks' service labels "<key>-api" and
+  # "<key>-web" (Grafana's limit for a check label is also 32).
   validation {
     condition = alltrue([
-      for key in keys(var.games) : can(regex("^[a-z][a-z0-9-]{0,30}[a-z0-9]$", key)) && key != "hub"
+      for key in keys(var.games) : can(regex("^[a-z][a-z0-9-]{0,26}[a-z0-9]$", key)) && key != "hub"
     ])
-    error_message = "Game keys must be 2-32 lowercase letters, digits or dashes, start with a letter, and not be \"hub\"."
-  }
-
-  # The API component is "<key>-api", which must fit in 32 characters too.
-  validation {
-    condition = alltrue([
-      for key, game in var.games : game.api == null || length(key) <= 28
-    ])
-    error_message = "Keys of games with an api must be at most 28 characters, so \"<key>-api\" fits App Platform's 32."
+    error_message = "Game keys must be 2-28 lowercase letters, digits or dashes, start with a letter, and not be \"hub\"."
   }
 }

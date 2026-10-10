@@ -51,11 +51,11 @@ data "terraform_remote_state" "accounts" {
 }
 
 # The monitoring/ root module's outputs: where game APIs push their telemetry
-# (Grafana Cloud's OTLP gateway) and the credentials to do it with. Like
-# accounts' state above, it's only read when some game has an API, and
-# monitoring/ must have been applied once.
+# (Grafana Cloud's OTLP gateway) and the credentials to do it with, and what
+# the grafana provider needs to declare uptime checks (providers.tf). Unlike
+# accounts' state above it's always read: every game gets an uptime check,
+# API or not. monitoring/ must have been applied once.
 data "terraform_remote_state" "monitoring" {
-  count   = length(local.apis) > 0 ? 1 : 0
   backend = "s3"
 
   config = {
@@ -94,14 +94,14 @@ locals {
   issuer = one(data.terraform_remote_state.accounts[*].outputs.issuer)
 
   # Where the APIs push telemetry, and the Authorization header value to send
-  # with it. Null when there are no APIs. The header value holds a token, and
-  # it's a sensitive output in monitoring/, but that marking is lost on the
-  # way through terraform_remote_state: here it's a plain string that a plan
+  # with it. The header value holds a token, and it's a sensitive output in
+  # monitoring/, but that marking is lost on the way through
+  # terraform_remote_state: here it's a plain string that a plan
   # would print. sensitive() marks it again, so anything built from this
   # local shows as "(sensitive value)". Always use the local, never the data
   # source's attribute directly.
-  otlp_endpoint      = one(data.terraform_remote_state.monitoring[*].outputs.otlp_endpoint)
-  otlp_authorization = sensitive(one(data.terraform_remote_state.monitoring[*].outputs.otlp_authorization))
+  otlp_endpoint      = data.terraform_remote_state.monitoring.outputs.otlp_endpoint
+  otlp_authorization = sensitive(data.terraform_remote_state.monitoring.outputs.otlp_authorization)
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.
@@ -389,4 +389,54 @@ resource "digitalocean_spaces_bucket" "downloads" {
 resource "digitalocean_cdn" "downloads" {
   origin = digitalocean_spaces_bucket.downloads.bucket_domain_name
   ttl    = 3600
+}
+
+# --- Uptime checks -----------------------------------------------------------
+
+# Grafana's probes request these URLs from outside every few minutes (see
+# "Uptime checks" in the README). They're generated from the same var.games
+# as the components above, so a new game is checked from its first apply.
+#
+# Each game with an API gets two checks on it, because "up" has two meanings:
+#   - health:   the process is running and answering. This is the same path
+#               App Platform's own health check uses. It deliberately doesn't
+#               look at the database: if it did, a database blip would make
+#               App Platform restart a healthy container.
+#   - database: a real, public read, the top of the leaderboard. This is the
+#               one that fails when the API can't reach Postgres.
+# Both are public GETs; no check signs in.
+locals {
+  api_checks = merge([
+    for key, api in local.apis : {
+      "${key}-api health" = {
+        url     = "https://${local.hostname}/${key}/api/actuator/health"
+        service = "${key}-api"
+        # Spring Boot answers {"status":"UP",...}. A 200 with anything else
+        # isn't healthy.
+        body_must_match = ["\"status\"\\s*:\\s*\"UP\""]
+      }
+      "${key}-api database" = {
+        url     = "https://${local.hostname}/${key}/api/scores/top?limit=1"
+        service = "${key}-api"
+        # A JSON array (empty, for a brand-new game, is fine). An error would
+        # be a JSON object, and not a 200 in the first place.
+        body_must_match = ["^\\s*\\["]
+      }
+    }
+  ]...)
+
+  # The web build is static files, so 200 for the page is all there is to
+  # ask. The trailing slash matters, as in outputs.tf.
+  web_checks = {
+    for key, game in var.games : "${key} web" => {
+      url     = "https://${local.hostname}/${key}/"
+      service = "${key}-web"
+    }
+  }
+}
+
+module "uptime" {
+  source = "../../modules/uptime-checks"
+
+  checks = merge(local.api_checks, local.web_checks)
 }
