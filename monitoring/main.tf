@@ -141,7 +141,7 @@ resource "grafana_cloud_stack_service_account" "terraform" {
 # unknown, so Terraform can't plan the folder or dashboard in the same run
 # ("the Grafana client is required for this resource"). -target plans the
 # token alone:
-#   terraform apply -target=grafana_cloud_stack_service_account_token.terraform #     -replace=grafana_cloud_stack_service_account_token.terraform
+#   terraform apply -target=grafana_cloud_stack_service_account_token.terraform -replace=grafana_cloud_stack_service_account_token.terraform
 #   terraform apply
 resource "grafana_cloud_stack_service_account_token" "terraform" {
   stack_slug         = data.grafana_cloud_stack.main.slug
