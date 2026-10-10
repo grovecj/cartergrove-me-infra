@@ -40,7 +40,7 @@ in. It has its own backend and therefore its own state file, so `apply` in
 
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
-"shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s
+"shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s outputs
 (`otlp_endpoint`, `otlp_authorization`) the same way, wrapping the second in
 `sensitive(...)`: an output's `sensitive` marking doesn't survive the trip
 through remote state (see "Monitoring"). `shared/outputs.tf` is the contract: projects should rely only
@@ -177,8 +177,9 @@ to be fewer or slower than that.
    Prometheus data source) and ages out by itself.
 4. **Only then** can `projects/accounts/` and `projects/games/` plan: they
    read these outputs, and fail with `Unable to find remote state` until
-   `monitoring/terraform.tfstate` exists. Their next apply adds the two env
-   vars and redeploys the services.
+   `monitoring/terraform.tfstate` exists. Their next apply adds the three env
+   vars (`GRAFANA_OTLP_ENDPOINT`, `GRAFANA_OTLP_AUTHORIZATION`,
+   `DEPLOYMENT_ENVIRONMENT`) and redeploys the services.
 
 ### Rotating the services' token
 
