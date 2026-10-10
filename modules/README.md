@@ -4,6 +4,59 @@ Reusable building blocks called from root modules (`shared/`, `projects/*`).
 A module has no backend and no provider configuration of its own: it uses the
 caller's provider, and its resources are stored in the caller's state.
 
+## `uptime-checks/`
+
+Outside-in HTTP checks, run by Grafana Cloud Synthetic Monitoring: every few
+minutes a probe requests each URL and records whether it answered properly
+and how fast. A project calls this for the URLs it owns.
+
+```hcl
+module "uptime" {
+  source = "../../modules/uptime-checks"
+
+  checks = {
+    "accounts discovery" = {                       # the check's `job` label
+      url             = "${local.issuer}/.well-known/openid-configuration"
+      service         = local.project              # the `service` label
+      body_must_match = ["\"issuer\""]             # optional: regexes, all must match
+    }
+  }
+}
+```
+
+A check passes when the URL answers 200 over TLS and the body matches every
+regular expression given. It's a plain `GET` with no credentials, so only
+point it at public, read-only URLs.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `checks` | (required) | map of name => `{ url, service, body_must_match }` |
+| `probe` | `"Ohio"` | the one probe location that runs them |
+| `frequency_minutes` | `5` | every check, from that location |
+| `timeout_seconds` | `10` | |
+
+| Output | |
+| --- | --- |
+| `max_runs_per_month` | runs these checks use in a 31-day month, for the budget in the top-level README |
+
+**The caller configures the provider.** The module uses the caller's
+`grafana` provider, which must be set up for Synthetic Monitoring with
+`monitoring/`'s outputs (see `projects/accounts/providers.tf`):
+
+```hcl
+provider "grafana" {
+  sm_url          = data.terraform_remote_state.monitoring.outputs.synthetic_monitoring_url
+  sm_access_token = sensitive(data.terraform_remote_state.monitoring.outputs.synthetic_monitoring_access_token)
+}
+```
+
+**Regular expressions are written twice-escaped.** They're Go (RE2) syntax,
+inside a Terraform string, so a regex backslash is `\\` and a quote is
+`\"`: the regex `"status"\s*:\s*"UP"` is written
+`"\"status\"\\s*:\\s*\"UP\""`.
+
+**A wrong probe name fails the plan** with the list of valid ones.
+
 ## `project-database/`
 
 A database + user for one project on the shared Postgres cluster. Projects

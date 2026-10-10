@@ -41,7 +41,8 @@ in. It has its own backend and therefore its own state file, so `apply` in
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
 "shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s outputs
-(`otlp_endpoint`, `otlp_authorization`) the same way, wrapping the second in
+(`otlp_endpoint`, `otlp_authorization`, and the `synthetic_monitoring_*` pair
+their uptime checks are made with) the same way, wrapping the tokens in
 `sensitive(...)`: an output's `sensitive` marking doesn't survive the trip
 through remote state (see "Monitoring"). `shared/outputs.tf` is the contract: projects should rely only
 on what it exports. `monitoring/outputs.tf` is the same kind of contract
@@ -164,6 +165,56 @@ combination of label values, so a label with unbounded values (a raw URL, a
 user id) can eat the 10k by itself. And 100k check runs a month is about one
 check a minute for two targets (a month has ~43,800 minutes), so checks have
 to be fewer or slower than that.
+
+### Uptime checks
+
+Five HTTP checks, each a plain public `GET` every 5 minutes from one probe
+location (Ohio). No check signs in or carries a credential.
+
+| Check (`job`) | `service` | URL | Passes when | Declared in |
+| --- | --- | --- | --- | --- |
+| `match3-api health` | `match3-api` | `https://games.cartergrove.me/match3/api/actuator/health` | 200 and status `UP` | `projects/games/` |
+| `match3-api database` | `match3-api` | `https://games.cartergrove.me/match3/api/scores/top?limit=1` | 200 and a JSON array | `projects/games/` |
+| `match3 web` | `match3-web` | `https://games.cartergrove.me/match3/` | 200 | `projects/games/` |
+| `accounts discovery` | `accounts` | `https://auth.cartergrove.me/.well-known/openid-configuration` | 200 and `issuer` is `https://auth.cartergrove.me` | `projects/accounts/` |
+| `accounts signing keys` | `accounts` | `https://auth.cartergrove.me/oauth2/jwks` | 200 and at least one key | `projects/accounts/` |
+
+- **Two checks per API, because "up" has two meanings.** `health` is
+  *liveness*: the process is running and answering. It's the path App
+  Platform's own health check uses, and it deliberately doesn't look at the
+  database, because a health check that fails on a database blip gets a
+  healthy container restarted. `database` is the other question, "can it do
+  its job?": a real read of the leaderboard, which fails when the API can't
+  reach Postgres. (The achievements list wouldn't do: it's served from the
+  API's configuration without touching the database.)
+- **Declared where the URL is.** The game checks are generated from
+  `var.games` in `projects/games/`, so a new game is checked from its first
+  apply: one check for its web build, two more if it has an `api`. Both
+  projects call [`modules/uptime-checks`](modules/README.md#uptime-checks),
+  which holds the settings they share (probe, interval, timeout).
+- **What a check records.** Success, duration and status code, as metrics
+  labelled `job`, `instance` (the URL) and `probe`, and because the URLs are
+  HTTPS, when the TLS certificate expires. The `service` label is kept on
+  one series per check, `sm_check_info` (as `label_service`), to be joined
+  to the others on `job` and `instance`. In Grafana: **Testing & synthetics
+  → Synthetics → Checks**.
+- **Alerts are separate.** A failing check shows red in Grafana and tells
+  nobody. That's the alerting issue.
+
+**Budget.** The free tier allows 100,000 check runs a month. One check, from
+one location, every 5 minutes, is 12 runs an hour: 8,928 in a 31-day month.
+
+| Checks | Runs in a 31-day month | Of the allowance |
+| --- | --- | --- |
+| 5 (today) | 44,640 | 45% |
+| 8 (a second game with an API) | 71,424 | 71% |
+| 11 (a third) | 98,208 | 98% |
+
+A second probe location doubles every row, so 5 checks from two locations is
+89,280: it fits today and stops fitting with the next game. Past three games
+with APIs, raise `frequency_minutes` to 10 in both projects' `module "uptime"`
+blocks, which halves everything. Actual usage is on the stack's billing and
+usage dashboard in Grafana.
 
 ### One-time: first apply
 
@@ -304,6 +355,10 @@ too, with a web build's `index.html` at its root.
 2. Add a link to `/<key>/` in `projects/games/hub/index.html`, plus a link to
    its download on the CDN (`downloads_cdn_url`/`<key>/...`) if it has one.
 3. Grant DigitalOcean's GitHub app access to the repo (see above), then `terraform apply`.
+
+Uptime checks come with it: one for the web build, two more for an `api`.
+They count against a monthly allowance, so look at the budget table under
+"Uptime checks" first.
 
 For a game with an `api`, also grant the GitHub app access to the API's repo,
 and see "One-time: a game API's first apply" below. Keys of games with an API
@@ -518,7 +573,8 @@ the server (`docker compose down` in `/opt/minecraft`), copy the world into
   resources go in the hand-made `cartergrove.me` project, which Terraform
   only reads (a `data` source) and doesn't manage.
 - **Versions:** Terraform `~> 1.14` and provider `digitalocean/digitalocean`
-  `~> 2.102` (`monitoring/` uses `grafana/grafana` `~> 4.49` instead). The
+  `~> 2.102` (`monitoring/` uses `grafana/grafana` `~> 4.49` instead, and
+  `projects/accounts/` and `projects/games/` use both). The
   exact provider build is pinned by each root module's committed
   `.terraform.lock.hcl` (hashes for Windows, Linux and macOS arm64).
 - **Secrets:** credentials come from environment variables only. State,

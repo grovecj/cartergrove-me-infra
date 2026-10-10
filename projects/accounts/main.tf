@@ -24,7 +24,8 @@ data "terraform_remote_state" "shared" {
 }
 
 # The monitoring/ root module's outputs: where the service pushes its
-# telemetry (Grafana Cloud's OTLP gateway) and the credentials to do it with.
+# telemetry (Grafana Cloud's OTLP gateway) and the credentials to do it with,
+# and what the grafana provider needs to declare uptime checks (providers.tf).
 # Same bucket, monitoring's key. monitoring/ must have been applied once, or
 # this fails with "Unable to find remote state".
 data "terraform_remote_state" "monitoring" {
@@ -254,4 +255,36 @@ resource "digitalocean_record" "accounts" {
   name   = "auth"
   value  = "${trimprefix(digitalocean_app.accounts.default_ingress, "https://")}."
   ttl    = 3600
+}
+
+# --- Uptime checks -----------------------------------------------------------
+
+# Grafana's probes request these URLs from outside every few minutes (see
+# "Uptime checks" in the README). Both are public by design: they're what
+# every client of the service fetches before it can sign anyone in, so if
+# either fails, sign-in is broken everywhere, whatever /actuator/health says.
+module "uptime" {
+  source = "../../modules/uptime-checks"
+
+  checks = {
+    # OIDC discovery: the document clients read to find every other endpoint.
+    # The issuer in it must be exactly ours, since clients compare it with
+    # the `iss` claim of the tokens they're given. The dots are escaped
+    # because the value is used as a regular expression.
+    "accounts discovery" = {
+      url             = "${local.issuer}/.well-known/openid-configuration"
+      service         = local.project
+      body_must_match = ["\"issuer\"\\s*:\\s*\"${replace(local.issuer, ".", "\\.")}\""]
+    }
+
+    # The public keys that verify the tokens (the discovery document's
+    # jwks_uri; /oauth2/jwks is Spring Authorization Server's default path).
+    # Game APIs fetch this to check signatures, so it must hold at least one
+    # key: `"keys":[{`.
+    "accounts signing keys" = {
+      url             = "${local.issuer}/oauth2/jwks"
+      service         = local.project
+      body_must_match = ["\"keys\"\\s*:\\s*\\[\\s*\\{"]
+    }
+  }
 }

@@ -8,6 +8,12 @@ terraform {
       source  = "digitalocean/digitalocean"
       version = "~> 2.102"
     }
+    # Only for uptime checks (Grafana Cloud Synthetic Monitoring). Same
+    # version as monitoring/, which installs it.
+    grafana = {
+      source  = "grafana/grafana"
+      version = "~> 4.49"
+    }
   }
 
   # State lives in a DigitalOcean Spaces bucket, which speaks the S3 API, so we

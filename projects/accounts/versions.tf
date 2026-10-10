@@ -8,6 +8,12 @@ terraform {
       source  = "digitalocean/digitalocean"
       version = "~> 2.102"
     }
+    # Only for uptime checks (Grafana Cloud Synthetic Monitoring). Same
+    # version as monitoring/, which installs it.
+    grafana = {
+      source  = "grafana/grafana"
+      version = "~> 4.49"
+    }
     # Generates the JWT signing key (tls_private_key). It runs entirely inside
     # Terraform: no API, no credentials.
     tls = {
