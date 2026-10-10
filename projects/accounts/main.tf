@@ -23,6 +23,27 @@ data "terraform_remote_state" "shared" {
   }
 }
 
+# The monitoring/ root module's outputs: where the service pushes its
+# telemetry (Grafana Cloud's OTLP gateway) and the credentials to do it with.
+# Same bucket, monitoring's key. monitoring/ must have been applied once, or
+# this fails with "Unable to find remote state".
+data "terraform_remote_state" "monitoring" {
+  backend = "s3"
+
+  config = {
+    bucket    = "cartergrove-me-tfstate"
+    key       = "monitoring/terraform.tfstate"
+    endpoints = { s3 = "https://nyc3.digitaloceanspaces.com" }
+
+    region                      = "us-east-1"
+    skip_credentials_validation = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_s3_checksum            = true
+  }
+}
+
 locals {
   project = "accounts"
 
@@ -174,6 +195,22 @@ resource "digitalocean_app" "accounts" {
         value = local.issuer
         scope = "RUN_TIME"
         type  = "GENERAL"
+      }
+      # Monitoring: the service pushes its metrics to this OTLP endpoint,
+      # sending the second value as its Authorization header. That value
+      # holds a token that can only write telemetry (see monitoring/). With
+      # these unset the service sends nothing.
+      env {
+        key   = "GRAFANA_OTLP_ENDPOINT"
+        value = data.terraform_remote_state.monitoring.outputs.otlp_endpoint
+        scope = "RUN_TIME"
+        type  = "GENERAL"
+      }
+      env {
+        key   = "GRAFANA_OTLP_AUTHORIZATION"
+        value = data.terraform_remote_state.monitoring.outputs.otlp_authorization
+        scope = "RUN_TIME"
+        type  = "SECRET"
       }
     }
 

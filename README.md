@@ -38,9 +38,10 @@ in. It has its own backend and therefore its own state file, so `apply` in
 
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
-"shared"` block. `shared/outputs.tf` is the contract: projects should rely only
-on what it exports. `monitoring/` works the same way: it reads nothing from
-`shared/`, but projects read its outputs (see "Monitoring" below).
+"shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s
+(`otlp_endpoint`, `otlp_authorization`) the same way. `shared/outputs.tf` is the contract: projects should rely only
+on what it exports. `monitoring/outputs.tf` is the same kind of contract
+(see "Monitoring" below); `monitoring/` itself reads nothing from `shared/`.
 
 ## Shared resources
 
@@ -164,10 +165,10 @@ to be fewer or slower than that.
 
    The `curl_test` series shows up in the stack's **Explore** (pick the
    Prometheus data source) and ages out by itself.
-4. **Then** merge the change that makes the projects read these outputs. A
-   project's plan fails with `Unable to find remote state` until
-   `monitoring/terraform.tfstate` exists, which is why that's a separate,
-   later change.
+4. **Only then** can `projects/accounts/` and `projects/games/` plan: they
+   read these outputs, and fail with `Unable to find remote state` until
+   `monitoring/terraform.tfstate` exists. Their next apply adds the two env
+   vars and redeploys the services.
 
 ### Rotating the services' token
 
@@ -232,7 +233,9 @@ rather than an app of its own.
     `SPRING_DATASOURCE_PASSWORD` (`SECRET`), and for sign-in `AUTH_ISSUER`
     (the accounts project's `issuer` output, read from its state) and
     `AUTH_AUDIENCE` (the game key). The API checks tokens against the
-    issuer's public keys, so it needs no auth secrets.
+    issuer's public keys, so it needs no auth secrets. For monitoring,
+    `GRAFANA_OTLP_ENDPOINT` and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`),
+    from `monitoring/`'s state.
 
   Games without `api` get no service, route or database.
 - **Domain and TLS.** A `CNAME` record `games` → the app's
@@ -334,7 +337,9 @@ validates the tokens it issues. Discovery is at
 - **Env vars.** `SPRING_DATASOURCE_URL` (`jdbc:postgresql://<private_host>:<port>/accounts?sslmode=require`),
   `SPRING_DATASOURCE_USERNAME`, `AUTH_ISSUER` (`https://auth.cartergrove.me`),
   plus the `SECRET` ones: `SPRING_DATASOURCE_PASSWORD`, `GOOGLE_CLIENT_ID`,
-  `GOOGLE_CLIENT_SECRET` and `AUTH_SIGNING_KEY_PEM`.
+  `GOOGLE_CLIENT_SECRET` and `AUTH_SIGNING_KEY_PEM`. For monitoring,
+  `GRAFANA_OTLP_ENDPOINT` and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`), read
+  from `monitoring/`'s state like `shared/`'s outputs.
 - **Google OAuth client.** Variables `google_client_id` and
   `google_client_secret`, both `sensitive`. CI fills them from the
   `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` secrets (see "One-time CI

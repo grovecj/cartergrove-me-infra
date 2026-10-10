@@ -50,6 +50,28 @@ data "terraform_remote_state" "accounts" {
   }
 }
 
+# The monitoring/ root module's outputs: where game APIs push their telemetry
+# (Grafana Cloud's OTLP gateway) and the credentials to do it with. Like
+# accounts' state above, it's only read when some game has an API, and
+# monitoring/ must have been applied once.
+data "terraform_remote_state" "monitoring" {
+  count   = length(local.apis) > 0 ? 1 : 0
+  backend = "s3"
+
+  config = {
+    bucket    = "cartergrove-me-tfstate"
+    key       = "monitoring/terraform.tfstate"
+    endpoints = { s3 = "https://nyc3.digitaloceanspaces.com" }
+
+    region                      = "us-east-1"
+    skip_credentials_validation = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_s3_checksum            = true
+  }
+}
+
 locals {
   project = "games"
 
@@ -70,6 +92,11 @@ locals {
   # `count`, the data source is a list; `[*]` makes a list of its outputs and
   # `one()` turns a one- or zero-element list into its element or null.
   issuer = one(data.terraform_remote_state.accounts[*].outputs.issuer)
+
+  # Where the APIs push telemetry, and the Authorization header value to send
+  # with it (sensitive: it holds a token). Null when there are no APIs.
+  otlp_endpoint      = one(data.terraform_remote_state.monitoring[*].outputs.otlp_endpoint)
+  otlp_authorization = one(data.terraform_remote_state.monitoring[*].outputs.otlp_authorization)
 
   # App Platform names regions by city ("nyc"), while Droplets, Spaces, VPCs
   # etc. name the datacenter ("nyc1"). Strip the trailing digits.
@@ -245,6 +272,22 @@ resource "digitalocean_app" "hub" {
           value = service.key
           scope = "RUN_TIME"
           type  = "GENERAL"
+        }
+        # Monitoring: the API pushes its metrics to this OTLP endpoint,
+        # sending the second value as its Authorization header. Every game
+        # API gets the same pair: the token inside can only write telemetry
+        # (see monitoring/). With these unset an API sends nothing.
+        env {
+          key   = "GRAFANA_OTLP_ENDPOINT"
+          value = local.otlp_endpoint
+          scope = "RUN_TIME"
+          type  = "GENERAL"
+        }
+        env {
+          key   = "GRAFANA_OTLP_AUTHORIZATION"
+          value = local.otlp_authorization
+          scope = "RUN_TIME"
+          type  = "SECRET"
         }
       }
     }
