@@ -9,7 +9,7 @@ resources, like one managed Postgres cluster, without stepping on each other.
 
 ```
 shared/            # root module: DNS zone, VPC, shared Postgres cluster, ...
-monitoring/        # root module: Grafana Cloud (telemetry credentials, Synthetic Monitoring)
+monitoring/        # root module: Grafana Cloud (telemetry credentials, Synthetic Monitoring, dashboards)
 projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
     hub/           # the hub's landing page, served at "/"
@@ -89,9 +89,9 @@ The zone already existed in DigitalOcean before Terraform, so `shared/main.tf`
 Health monitoring for the services (tracking issue:
 [grovecj/Match-3#92](https://github.com/grovecj/Match-3/issues/92)) runs on
 [Grafana Cloud](https://grafana.com/products/cloud/)'s free tier. This root
-module is the plumbing: it makes the credentials services send telemetry
-with, and switches on Synthetic Monitoring so projects can declare uptime
-checks. Dashboards and alerts get added here later.
+module makes the credentials services send telemetry with, switches on
+Synthetic Monitoring so projects can declare uptime checks, and loads the
+dashboard. Alerts get added here later.
 
 - **Push, not scrape.** The usual Prometheus setup *pulls*: a collector
   scrapes a `/metrics` endpoint on every service. App Platform has nowhere to
@@ -106,10 +106,12 @@ checks. Dashboards and alerts get added here later.
 
   | Credential | Can | Lives |
   | --- | --- | --- |
-  | Terraform's token (`GRAFANA_CLOUD_ACCESS_POLICY_TOKEN`) | manage access policies and tokens | your shell, CI secrets. Made by hand: [bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring) |
+  | Terraform's token (`GRAFANA_CLOUD_ACCESS_POLICY_TOKEN`) | manage access policies, tokens and the stack's service accounts | your shell, CI secrets. Made by hand: [bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring) |
   | Services' token (`grafana_cloud_access_policy_token.services_write`) | only `metrics:write`, `logs:write`, `traces:write`, only on this stack | this root's state, and each service's `GRAFANA_OTLP_AUTHORIZATION` env var. Made by Terraform |
   | Probes' token (`grafana_cloud_access_policy_token.synthetic_monitoring`) | the same writes plus `stacks:read`, only on this stack | this root's state, and Grafana's Synthetic Monitoring backend, which writes check results with it. Made by Terraform |
   | Synthetic Monitoring access token (`grafana_synthetic_monitoring_installation.main`) | create, change and delete uptime checks | this root's state, and the projects' grafana provider (read from state at plan time, never given to a service). Made by Grafana when Terraform installs Synthetic Monitoring |
+
+  | Terraform's service account token (`grafana_cloud_stack_service_account_token.terraform`) | sign in to the stack's Grafana as an Editor: folders and dashboards | this root's state only. Made by Terraform |
 
   A service is the likelier place for a leak (logs, a debug endpoint, a
   dependency). Its token can add junk data and nothing else: it can't read
@@ -213,6 +215,72 @@ with APIs, raise `frequency_minutes` to 10 in both projects' `module "uptime"`
 blocks, which halves everything. Actual usage is on the stack's billing and
 usage dashboard in Grafana.
 
+### The Services dashboard
+
+One dashboard, **Services**, in the `cartergrove.me` folder: Grafana →
+**Dashboards**, or `terraform output services_dashboard_url` in `monitoring/`.
+It answers "are the services OK?" from top to bottom:
+
+| Row | Panels | Answers |
+| --- | --- | --- |
+| From outside | every uptime check's result, share passed, duration, days left on the certificate | Can a player reach it? |
+| Traffic and errors | requests per second by route; 5xx and 4xx per second | Is it being used, and is it failing? |
+| Latency | p50 / p95 / p99, and p95 by route | Is it slow, and where? |
+| Saturation | database connections against the pool's 3, JVM heap against its maximum, CPU, garbage collection pauses | How close to full is it? |
+| Restarts | process uptime | Did it deploy or crash? |
+
+- **The four golden signals** (traffic, errors, latency, saturation) decide
+  what's on it. A panel that isn't one of those, or the outside view, belongs
+  on a different dashboard. The first three are what a player feels; the
+  fourth is what goes wrong next.
+- **One service at a time.** The **Service** picker at the top lists whatever
+  has reported from production, so a new service appears by itself. The top
+  row ignores it: a web build has checks but sends no metrics.
+- **Restarts are marked on every panel** (the blue lines, from the
+  **Restarts** annotation): a spike that lines up with one is a deploy, not a
+  mystery.
+- **It adds no series.** A dashboard only reads. Every query groups by labels
+  the services already keep to short lists (`uri` is the route, `status` the
+  code), so it can't grow the bill.
+- **Rates are over 5 minutes.** `rate(...[5m])` turns a counter into a
+  per-second speed. The services push once a minute, and a rate needs at
+  least two points, so shorter windows come up empty.
+- **Percentiles are estimates.** The services count requests into 8 duration
+  buckets (10 ms to 2.5 s); `histogram_quantile(0.95, ...)` works out "95% of
+  requests were faster than this" from the counts, assuming requests are
+  spread evenly inside a bucket.
+
+How it gets there: `monitoring/dashboards/services.json` is the dashboard,
+in the format Grafana exports and imports. `grafana_dashboard` uploads it.
+The stack's Grafana has its own API and login, apart from grafana.com's, so
+Terraform makes itself a *service account* there (role Editor) and a second
+`provider "grafana"` block (`grafana.stack`) signs in with its token.
+
+#### Changing the dashboard
+
+The file is the source of truth: **anything saved in the UI is overwritten by
+the next apply.** So:
+
+1. Open the dashboard and edit it in Grafana (**Edit**), where you can see
+   what a query returns. Don't worry about saving.
+2. **Export → Export as JSON** (turn *Export for sharing externally* off, so
+   the data source stays as it is), and put the result in
+   `monitoring/dashboards/services.json`.
+3. Commit, open a pull request, read the diff, merge. The apply uploads it.
+
+The first export will reorder and add fields compared with the file as it
+was first written by hand; after that, diffs are only what changed.
+
+The trade-off: the UI is much the nicer editor, but a dashboard that only
+lives there has no history, no review, and is gone if someone deletes it.
+In the repo it has all three, at the price of the export step. For a
+throwaway experiment, make a new dashboard outside the `cartergrove.me`
+folder; Terraform leaves those alone.
+
+To check that Terraform really owns it: delete the dashboard in the UI, run
+`terraform apply` in `monitoring/` (the plan is 1 to add), and it's back at
+the same URL.
+
 ### One-time: first apply
 
 1. **Account, token, secrets** exist ([bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring)).
@@ -221,7 +289,9 @@ usage dashboard in Grafana.
 2. **Apply** `monitoring/`, by merging (it's applied after `shared/`, before
    the projects) or locally. The plan is 5 to add: the services' policy and
    token, the probes' policy and token, and the Synthetic Monitoring
-   installation.
+   installation. (The dashboard came later: its apply is 4 to add, and
+   fails with a 403 until Terraform's token has the
+   `stack-service-accounts:write` scope from bootstrap step 7.)
 3. **Check the token can write but not read.** Locally, in `monitoring/`
    (bash, with `jq`; don't run this in CI, it handles the secret):
 

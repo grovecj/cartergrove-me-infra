@@ -169,12 +169,13 @@ can do anything, so both are made by hand, once.
    stack's Grafana) → **Security → Access Policies → Create access policy**:
    - Name `terraform`, realm **all stacks** (the organization).
    - Scopes: `stacks:read`, `accesspolicies:read`, `accesspolicies:write`,
-     `accesspolicies:delete`. That's what `monitoring/` needs today: read the
-     stack, and manage the write-only policy and token the services use.
-     Scopes that aren't in the tick-box list are under **Add scope**. Later
-     monitoring issues need more (e.g. `stack-service-accounts:write` for
-     dashboards and alerts); add them to this policy then. Existing tokens
-     pick up a policy's new scopes, so the token below stays the same.
+     `accesspolicies:delete`, `stack-service-accounts:write`. That's what
+     `monitoring/` needs: read the stack, manage the write-only policy and
+     token the services use, and make the service account Terraform signs
+     in to the stack's Grafana with (for dashboards). Scopes that aren't in
+     the tick-box list are under **Add scope**. Existing tokens pick up a
+     policy's new scopes, so adding one later leaves the token below as it
+     is.
 3. On that policy, **Add token**. Name it `terraform-ci`, pick an expiry you'll
    remember to renew, and copy the token (`glc_...`): it's shown once.
 4. Store it as the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` secret on this repo,
