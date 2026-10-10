@@ -1,8 +1,8 @@
 # Monitoring for every *.cartergrove.me service, on Grafana Cloud's free tier.
-# This root module is the plumbing: it finds the stack, makes the credentials
-# services push telemetry with, and switches on Synthetic Monitoring (uptime
-# checks) for the projects to declare their checks in. Dashboards and alerts
-# are added here by later issues.
+# This root module finds the stack, makes the credentials services push
+# telemetry with, switches on Synthetic Monitoring (uptime checks) for the
+# projects to declare their checks in, and loads the dashboards. Alerts are
+# added here by a later issue.
 #
 # How telemetry gets to Grafana: services *push* it over OTLP (the
 # OpenTelemetry Protocol, plain HTTP POSTs of metrics, logs or traces) to the
@@ -104,4 +104,58 @@ resource "grafana_cloud_access_policy_token" "synthetic_monitoring" {
 resource "grafana_synthetic_monitoring_installation" "main" {
   stack_id              = data.grafana_cloud_stack.main.id
   metrics_publisher_key = grafana_cloud_access_policy_token.synthetic_monitoring.token
+}
+
+# --- Inside the stack: dashboards ---------------------------------------------
+
+# Everything above is the *account* side of Grafana Cloud, done with
+# Terraform's Cloud token. What's inside the stack's Grafana (folders,
+# dashboards, later alert rules) is a different API with its own login: the
+# Cloud token doesn't open it. A *service account* is that login: a user for a
+# program instead of a person. It doesn't count towards the free tier's 3
+# users. See providers.tf for how its token is used.
+#
+# Editor can create and change folders and dashboards, and can't manage users,
+# data sources or other service accounts.
+resource "grafana_cloud_stack_service_account" "terraform" {
+  stack_slug = data.grafana_cloud_stack.main.slug
+  name       = "terraform"
+  role       = "Editor"
+}
+
+# Never expires, like the services' token. To rotate it:
+#   terraform apply -replace=grafana_cloud_stack_service_account_token.terraform
+# Nothing else holds it: it exists only in this root's state.
+resource "grafana_cloud_stack_service_account_token" "terraform" {
+  stack_slug         = data.grafana_cloud_stack.main.slug
+  service_account_id = grafana_cloud_stack_service_account.terraform.id
+  name               = "terraform"
+}
+
+# One folder for everything Terraform puts in Grafana, so it's obvious which
+# dashboards are code (edits in the UI get overwritten) and which were made by
+# hand to try something out.
+resource "grafana_folder" "services" {
+  provider = grafana.stack
+
+  uid   = "cartergrove-me"
+  title = "cartergrove.me"
+}
+
+# The "are the services OK?" dashboard. The JSON file is the dashboard: what
+# Grafana's "Export" produces and what its API takes. Terraform only uploads
+# it, and on every apply puts back whatever was changed in the UI. To change
+# it, see "Changing the dashboard" in the README.
+#
+# The uid is inside the JSON ("services"), which keeps the URL the same when
+# the dashboard is deleted and made again.
+resource "grafana_dashboard" "services" {
+  provider = grafana.stack
+
+  folder      = grafana_folder.services.uid
+  config_json = file("${path.module}/dashboards/services.json")
+
+  # Replace a dashboard with the same uid instead of failing, e.g. one saved
+  # from the UI before Terraform had made it.
+  overwrite = true
 }

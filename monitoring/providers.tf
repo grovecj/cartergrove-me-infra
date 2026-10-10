@@ -7,3 +7,20 @@
 # The s3 backend still needs AWS_* to reach the state bucket; nothing here
 # talks to DigitalOcean, so DIGITALOCEAN_TOKEN isn't used.
 provider "grafana" {}
+
+# A second configuration of the same provider, for what's *inside* the
+# stack's Grafana: folders and dashboards. The one above talks to
+# grafana.com (the account); this one talks to https://<slug>.grafana.net,
+# and logs in as the service account made in main.tf. Resources pick it with
+# `provider = grafana.stack`.
+#
+# The token comes from a resource in this same root, so on the very first
+# plan it doesn't exist yet. That's fine: nothing in the stack exists yet
+# either, so there's nothing for the provider to read until the apply has
+# made the token.
+provider "grafana" {
+  alias = "stack"
+
+  url  = data.grafana_cloud_stack.main.url
+  auth = grafana_cloud_stack_service_account_token.terraform.key
+}

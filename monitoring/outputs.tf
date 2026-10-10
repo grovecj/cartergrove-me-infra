@@ -56,3 +56,10 @@ output "synthetic_monitoring_access_token" {
   value       = grafana_synthetic_monitoring_installation.main.sm_access_token
   sensitive   = true
 }
+
+# Not a secret: opening it needs a Grafana login. For alert messages and
+# docs to link to.
+output "services_dashboard_url" {
+  description = "URL of the Services dashboard in the stack's Grafana."
+  value       = grafana_dashboard.services.url
+}
