@@ -115,22 +115,34 @@ resource "grafana_synthetic_monitoring_installation" "main" {
 # program instead of a person. It doesn't count towards the free tier's 3
 # users. See providers.tf for how its token is used.
 #
-# Admin, because Editor isn't enough: an Editor may create a folder, but its
-# right to read one is granted folder by folder, and Grafana refused to let
-# this account read back the folder it had just made (403, "Permissions
-# needed: folders:read"). An Admin can read every folder. It's also what the
-# alert rules' contact points will need. It does make the token below worth
-# more to a thief (an Admin can change anything in this Grafana), so it stays
-# where it is: only in this root's state, in the private bucket.
+# Admin, because Editor isn't enough for a folder's first moments. An
+# Editor's right to read a folder is granted folder by folder, and the grant
+# for a new one takes a moment to arrive: Grafana let this account create the
+# folder, then refused to let it read it straight back (403, "Permissions
+# needed: folders:read"), which is what the provider does after every create.
+# An Admin may read every folder, so there's nothing to wait for. It's also
+# what the alert rules' contact points will need. It does make the token
+# below worth more to a thief (an Admin can change anything in this Grafana),
+# so it stays where it is: only in this root's state, in the private bucket.
+#
+# Changing `role` replaces the account, and with it the token. See the token
+# for why that takes two applies.
 resource "grafana_cloud_stack_service_account" "terraform" {
   stack_slug = data.grafana_cloud_stack.main.slug
   name       = "terraform"
   role       = "Admin"
 }
 
-# Never expires, like the services' token. To rotate it:
-#   terraform apply -replace=grafana_cloud_stack_service_account_token.terraform
-# Nothing else holds it: it exists only in this root's state.
+# Never expires, like the services' token. Nothing else holds it: it exists
+# only in this root's state.
+#
+# Replacing it takes two applies, locally. The grafana.stack provider signs
+# in with this token, and while a new one is only planned its value is
+# unknown, so Terraform can't plan the folder or dashboard in the same run
+# ("the Grafana client is required for this resource"). -target plans the
+# token alone:
+#   terraform apply -target=grafana_cloud_stack_service_account_token.terraform #     -replace=grafana_cloud_stack_service_account_token.terraform
+#   terraform apply
 resource "grafana_cloud_stack_service_account_token" "terraform" {
   stack_slug         = data.grafana_cloud_stack.main.slug
   service_account_id = grafana_cloud_stack_service_account.terraform.id
