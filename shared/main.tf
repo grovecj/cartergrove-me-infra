@@ -69,16 +69,13 @@ resource "digitalocean_database_cluster" "postgres" {
   project_id           = data.digitalocean_project.main.id
   tags                 = local.tags
 
-  # Destroying the cluster deletes every project's data.
-  #
-  # TEMPORARILY OFF to move the cluster from nyc3 to nyc1 (grovecj/cartergrove-me-infra#11).
-  # The provider can migrate a cluster's region in place, but not its VPC
-  # (private_network_uuid forces a new cluster), so the move is a replacement.
-  # That's fine only because no project has data on it yet. Turn this back on
-  # right after that apply.
-  # lifecycle {
-  #   prevent_destroy = true
-  # }
+  # Destroying the cluster deletes every project's data. Note that changing
+  # private_network_uuid forces a new cluster (the provider can migrate a
+  # cluster's region in place, but not its VPC), so with this on, a plan that
+  # moves the cluster to another VPC fails instead of replacing it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Trusted sources: only these may connect to the cluster at all (the database
