@@ -1,7 +1,8 @@
 # Monitoring for every *.cartergrove.me service, on Grafana Cloud's free tier.
-# This root module is the plumbing: it finds the stack and makes the
-# credentials services push telemetry with. Dashboards, uptime checks and
-# alerts are added here by later issues.
+# This root module is the plumbing: it finds the stack, makes the credentials
+# services push telemetry with, and switches on Synthetic Monitoring (uptime
+# checks) for the projects to declare their checks in. Dashboards and alerts
+# are added here by later issues.
 #
 # How telemetry gets to Grafana: services *push* it over OTLP (the
 # OpenTelemetry Protocol, plain HTTP POSTs of metrics, logs or traces) to the
@@ -55,4 +56,52 @@ resource "grafana_cloud_access_policy_token" "services_write" {
   access_policy_id = grafana_cloud_access_policy.services_write.policy_id
   name             = "services-telemetry-write"
   display_name     = "Services: write telemetry (Terraform)"
+}
+
+# --- Synthetic Monitoring (uptime checks) -------------------------------------
+
+# Metrics a service pushes are *white-box* monitoring: the service reports on
+# itself. They stop when it dies, and "no data" looks the same as "nobody is
+# playing". Synthetic Monitoring is the *black-box* half: Grafana's own probe
+# servers request our public URLs every few minutes, the way a player's
+# browser would, and record whether that worked and how long it took. Only
+# that can say "down".
+#
+# This root only installs it. The checks themselves are declared by the
+# project that owns each URL (modules/uptime-checks), so a URL and its check
+# live side by side and a new game gets its checks in the same apply.
+
+# The probes write their results (metrics and logs) into our stack, and need a
+# credential for it, like the services do. It gets its own policy instead of
+# sharing services_write: Grafana asks for `stacks:read` as well, and this
+# token is held by Grafana's Synthetic Monitoring backend, not by our
+# services, so either can be rotated without touching the other.
+resource "grafana_cloud_access_policy" "synthetic_monitoring" {
+  region       = local.region
+  name         = "synthetic-monitoring-publish"
+  display_name = "Synthetic Monitoring: publish check results (Terraform)"
+
+  scopes = ["metrics:write", "logs:write", "traces:write", "stacks:read"]
+
+  realm {
+    type       = "stack"
+    identifier = data.grafana_cloud_stack.main.id
+  }
+}
+
+resource "grafana_cloud_access_policy_token" "synthetic_monitoring" {
+  region           = local.region
+  access_policy_id = grafana_cloud_access_policy.synthetic_monitoring.policy_id
+  name             = "synthetic-monitoring-publish"
+  display_name     = "Synthetic Monitoring: publish check results (Terraform)"
+}
+
+# "Installing" registers the stack with the Synthetic Monitoring API and hands
+# it the token above. It's safe on a stack where it's already installed (the
+# Grafana UI can do it too). What comes back is a third kind of credential:
+# an access token for the Synthetic Monitoring API itself, which is what
+# creates and deletes checks. See outputs.tf for where that goes.
+resource "grafana_synthetic_monitoring_installation" "main" {
+  stack_id              = data.grafana_cloud_stack.main.id
+  metrics_publisher_key = grafana_cloud_access_policy_token.synthetic_monitoring.token
 }

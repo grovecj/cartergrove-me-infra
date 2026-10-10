@@ -1,6 +1,8 @@
 # Outputs are the contract with project root modules: projects read them via
-# `data "terraform_remote_state" "monitoring"` and pass them to their services
-# as GRAFANA_OTLP_ENDPOINT and GRAFANA_OTLP_AUTHORIZATION.
+# `data "terraform_remote_state" "monitoring"`. The otlp_* pair goes to their
+# services as GRAFANA_OTLP_ENDPOINT and GRAFANA_OTLP_AUTHORIZATION; the
+# synthetic_monitoring_* pair configures their grafana provider, which
+# declares the uptime checks.
 
 output "otlp_endpoint" {
   description = "Base URL of the stack's OTLP gateway. Clients add the signal's path: /v1/metrics, /v1/logs or /v1/traces."
@@ -33,4 +35,24 @@ output "prometheus" {
     url     = data.grafana_cloud_stack.main.prometheus_url
     user_id = data.grafana_cloud_stack.main.prometheus_user_id
   }
+}
+
+# The grafana provider in a project needs these two to manage checks:
+#   provider "grafana" {
+#     sm_url          = <synthetic_monitoring_url>
+#     sm_access_token = sensitive(<synthetic_monitoring_access_token>)
+#   }
+# That's all it gets. A project never sees Terraform's own Grafana Cloud
+# token, so it can add and remove checks and nothing else in Grafana.
+output "synthetic_monitoring_url" {
+  description = "URL of the Synthetic Monitoring API for the stack's region (the grafana provider's sm_url)."
+  value       = grafana_synthetic_monitoring_installation.main.stack_sm_api_url
+}
+
+# Like otlp_authorization, the `sensitive` marking is lost through
+# terraform_remote_state: a project must wrap it in sensitive(...) again.
+output "synthetic_monitoring_access_token" {
+  description = "Access token for the Synthetic Monitoring API: creates, changes and deletes checks (the grafana provider's sm_access_token)."
+  value       = grafana_synthetic_monitoring_installation.main.sm_access_token
+  sensitive   = true
 }
