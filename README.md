@@ -9,7 +9,7 @@ resources, like one managed Postgres cluster, without stepping on each other.
 
 ```
 shared/            # root module: DNS zone, VPC, shared Postgres cluster, ...
-monitoring/        # root module: Grafana Cloud (credentials services push telemetry with)
+monitoring/        # root module: Grafana Cloud (telemetry credentials, Synthetic Monitoring)
 projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
     hub/           # the hub's landing page, served at "/"
@@ -90,9 +90,9 @@ The zone already existed in DigitalOcean before Terraform, so `shared/main.tf`
 Health monitoring for the services (tracking issue:
 [grovecj/Match-3#92](https://github.com/grovecj/Match-3/issues/92)) runs on
 [Grafana Cloud](https://grafana.com/products/cloud/)'s free tier. This root
-module is the plumbing: it doesn't monitor anything yet, it makes the
-credentials services send telemetry with. Dashboards, uptime checks and alerts
-get added here later.
+module is the plumbing: it makes the credentials services send telemetry
+with, and switches on Synthetic Monitoring so projects can declare uptime
+checks. Dashboards and alerts get added here later.
 
 - **Push, not scrape.** The usual Prometheus setup *pulls*: a collector
   scrapes a `/metrics` endpoint on every service. App Platform has nowhere to
@@ -103,16 +103,27 @@ get added here later.
 - **One stack, read not created.** The free tier includes one stack, made at
   sign-up. `data "grafana_cloud_stack"` looks it up by its slug
   (`var.grafana_stack_slug`); Terraform can't change or delete it.
-- **Two credentials, on purpose.**
+- **Separate credentials, on purpose.** Each is as narrow as its job allows.
 
   | Credential | Can | Lives |
   | --- | --- | --- |
   | Terraform's token (`GRAFANA_CLOUD_ACCESS_POLICY_TOKEN`) | manage access policies and tokens | your shell, CI secrets. Made by hand: [bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring) |
   | Services' token (`grafana_cloud_access_policy_token.services_write`) | only `metrics:write`, `logs:write`, `traces:write`, only on this stack | this root's state, and each service's `GRAFANA_OTLP_AUTHORIZATION` env var. Made by Terraform |
 
+  | Probes' token (`grafana_cloud_access_policy_token.synthetic_monitoring`) | the same writes plus `stacks:read`, only on this stack | this root's state, and Grafana's Synthetic Monitoring backend, which writes check results with it. Made by Terraform |
+  | Synthetic Monitoring access token (`grafana_synthetic_monitoring_installation.main`) | create, change and delete uptime checks | this root's state, and the projects' grafana provider (read from state at plan time, never given to a service). Made by Grafana when Terraform installs Synthetic Monitoring |
+
   A service is the likelier place for a leak (logs, a debug endpoint, a
   dependency). Its token can add junk data and nothing else: it can't read
   what was sent, open Grafana, or make more tokens.
+- **Synthetic Monitoring is installed here, used elsewhere.** Pushed metrics
+  are *white-box* monitoring: a service reporting on itself, which stops when
+  it dies. Synthetic Monitoring is the *black-box* half: Grafana's probe
+  servers request our public URLs from outside and record whether that
+  worked. `grafana_synthetic_monitoring_installation` switches it on for the
+  stack; the checks are declared by the project that owns each URL, which
+  keeps the dependency one-way (projects read `monitoring/`, never the
+  reverse).
 - **Outputs**, the contract with the projects:
   - `otlp_endpoint`: the gateway's base URL. Clients add `/v1/metrics`,
     `/v1/logs` or `/v1/traces`.
@@ -125,6 +136,10 @@ get added here later.
     on the spot.
   - `prometheus`: the metrics query URL and user id. Not secret; used for the
     read check below.
+  - `synthetic_monitoring_url` and `synthetic_monitoring_access_token`
+    (sensitive): what a project's `provider "grafana"` needs to manage
+    uptime checks (`sm_url`, `sm_access_token`). The same warning applies to
+    the token: wrap it in `sensitive(...)` where it's read.
 
   Projects pass the first two to their services as `GRAFANA_OTLP_ENDPOINT`
   and `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`), plus
@@ -156,7 +171,9 @@ to be fewer or slower than that.
    Without them the plan fails on purpose (`grafana_stack_slug is empty`), or
    with an authentication error from Grafana.
 2. **Apply** `monitoring/`, by merging (it's applied after `shared/`, before
-   the projects) or locally. The plan is 2 to add: the policy and its token.
+   the projects) or locally. The plan is 5 to add: the services' policy and
+   token, the probes' policy and token, and the Synthetic Monitoring
+   installation.
 3. **Check the token can write but not read.** Locally, in `monitoring/`
    (bash, with `jq`; don't run this in CI, it handles the secret):
 
