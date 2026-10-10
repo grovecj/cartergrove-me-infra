@@ -12,8 +12,13 @@ output "otlp_endpoint" {
 # "Authorization: Basic <that>". Building the whole header value here means a
 # service just copies one env var into one header. base64 is an encoding, not
 # encryption: this value is as secret as the token inside it. `sensitive`
-# makes Terraform print "(sensitive value)" for it, here and in any project
-# that reads it.
+# makes Terraform print "(sensitive value)" for it, in this root module only.
+#
+# The marking does NOT travel through terraform_remote_state: a project that
+# reads this output gets a plain string, and Terraform will print it in a
+# plan like any other (hashicorp/terraform#29544). A project must mark it
+# again where it reads it:
+#   sensitive(data.terraform_remote_state.monitoring.outputs.otlp_authorization)
 output "otlp_authorization" {
   description = "Value of the Authorization header for the OTLP gateway (write-only token)."
   value       = "Basic ${base64encode("${data.grafana_cloud_stack.main.id}:${grafana_cloud_access_policy_token.services_write.token}")}"

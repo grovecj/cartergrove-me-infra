@@ -116,7 +116,11 @@ get added here later.
     `/v1/logs` or `/v1/traces`.
   - `otlp_authorization` (sensitive): the whole `Authorization` header value,
     `Basic base64(<stack id>:<token>)`. base64 is an encoding, not
-    encryption, so treat it exactly like the token.
+    encryption, so treat it exactly like the token. **`sensitive` stops at
+    this root's edge.** Read through `terraform_remote_state`, the value
+    arrives as a plain string that a plan prints in full, and plan comments
+    here are public. A project that reads it must wrap it in `sensitive(...)`
+    on the spot.
   - `prometheus`: the metrics query URL and user id. Not secret; used for the
     read check below.
 
