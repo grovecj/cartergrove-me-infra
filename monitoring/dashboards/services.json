@@ -38,7 +38,7 @@
         "hide": false,
         "iconColor": "blue",
         "name": "Restarts",
-        "expr": "changes(process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"}[3m]) > 0",
+        "expr": "process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"} != process_start_time_milliseconds{service_name=\"$service\", deployment_environment=\"production\"} offset 1m",
         "step": "1m",
         "titleFormat": "$service restarted",
         "textFormat": "A new process took over (deploy or crash)."
@@ -249,7 +249,7 @@
       "id": 4,
       "type": "stat",
       "title": "Certificate expires in",
-      "description": "Time until the TLS certificate each check was shown expires. App Platform renews them by itself; this is here to notice if it ever doesn't.",
+      "description": "Time until the TLS certificate the server presented to each check expires. App Platform renews them by itself; this is here to notice if it ever doesn't.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

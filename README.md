@@ -110,7 +110,6 @@ dashboard. Alerts get added here later.
   | Services' token (`grafana_cloud_access_policy_token.services_write`) | only `metrics:write`, `logs:write`, `traces:write`, only on this stack | this root's state, and each service's `GRAFANA_OTLP_AUTHORIZATION` env var. Made by Terraform |
   | Probes' token (`grafana_cloud_access_policy_token.synthetic_monitoring`) | the same writes plus `stacks:read`, only on this stack | this root's state, and Grafana's Synthetic Monitoring backend, which writes check results with it. Made by Terraform |
   | Synthetic Monitoring access token (`grafana_synthetic_monitoring_installation.main`) | create, change and delete uptime checks | this root's state, and the projects' grafana provider (read from state at plan time, never given to a service). Made by Grafana when Terraform installs Synthetic Monitoring |
-
   | Terraform's service account token (`grafana_cloud_stack_service_account_token.terraform`) | sign in to the stack's Grafana as an Editor: folders and dashboards | this root's state only. Made by Terraform |
 
   A service is the likelier place for a leak (logs, a debug endpoint, a
