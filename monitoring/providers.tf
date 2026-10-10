@@ -17,7 +17,8 @@ provider "grafana" {}
 # The token comes from a resource in this same root, so on the very first
 # plan it doesn't exist yet. That's fine: nothing in the stack exists yet
 # either, so there's nothing for the provider to read until the apply has
-# made the token.
+# made the token. It's not fine later: a plan that replaces the token can't
+# also plan what's in the stack (see the token in main.tf).
 provider "grafana" {
   alias = "stack"
 
