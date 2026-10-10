@@ -109,7 +109,6 @@ checks. Dashboards and alerts get added here later.
   | --- | --- | --- |
   | Terraform's token (`GRAFANA_CLOUD_ACCESS_POLICY_TOKEN`) | manage access policies and tokens | your shell, CI secrets. Made by hand: [bootstrap step 7](bootstrap/README.md#7-grafana-cloud-account-and-terraform-token-monitoring) |
   | Services' token (`grafana_cloud_access_policy_token.services_write`) | only `metrics:write`, `logs:write`, `traces:write`, only on this stack | this root's state, and each service's `GRAFANA_OTLP_AUTHORIZATION` env var. Made by Terraform |
-
   | Probes' token (`grafana_cloud_access_policy_token.synthetic_monitoring`) | the same writes plus `stacks:read`, only on this stack | this root's state, and Grafana's Synthetic Monitoring backend, which writes check results with it. Made by Terraform |
   | Synthetic Monitoring access token (`grafana_synthetic_monitoring_installation.main`) | create, change and delete uptime checks | this root's state, and the projects' grafana provider (read from state at plan time, never given to a service). Made by Grafana when Terraform installs Synthetic Monitoring |
 
