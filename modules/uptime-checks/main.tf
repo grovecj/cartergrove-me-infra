@@ -36,7 +36,7 @@ resource "grafana_synthetic_monitoring_check" "http" {
   # adds a breakdown per request phase, and several times the series.
   basic_metrics_only = true
 
-  # Alerts are our own rules (see the alerting issue), not the built-in ones
+  # Alerts are our own rules (monitoring/alerts.tf), not the built-in ones
   # this setting switches on. "none" is the default.
   alert_sensitivity = "none"
 

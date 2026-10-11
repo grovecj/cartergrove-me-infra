@@ -1,8 +1,8 @@
 # Monitoring for every *.cartergrove.me service, on Grafana Cloud's free tier.
 # This root module finds the stack, makes the credentials services push
 # telemetry with, switches on Synthetic Monitoring (uptime checks) for the
-# projects to declare their checks in, and loads the dashboards. Alerts are
-# added here by a later issue.
+# projects to declare their checks in, and loads the dashboards. The alerts
+# are in alerts.tf.
 #
 # How telemetry gets to Grafana: services *push* it over OTLP (the
 # OpenTelemetry Protocol, plain HTTP POSTs of metrics, logs or traces) to the
@@ -110,7 +110,7 @@ resource "grafana_synthetic_monitoring_installation" "main" {
 
 # Everything above is the *account* side of Grafana Cloud, done with
 # Terraform's Cloud token. What's inside the stack's Grafana (folders,
-# dashboards, later alert rules) is a different API with its own login: the
+# dashboards, alert rules) is a different API with its own login: the
 # Cloud token doesn't open it. A *service account* is that login: a user for a
 # program instead of a person. It doesn't count towards the free tier's 3
 # users. See providers.tf for how its token is used.
@@ -121,7 +121,7 @@ resource "grafana_synthetic_monitoring_installation" "main" {
 # folder, then refused to let it read it straight back (403, "Permissions
 # needed: folders:read"), which is what the provider does after every create.
 # An Admin may read every folder, so there's nothing to wait for. It's also
-# what the alert rules' contact points will need. It does make the token
+# what the alerts' contact point and policy need. It does make the token
 # below worth more to a thief (an Admin can change anything in this Grafana),
 # so it stays where it is: only in this root's state, in the private bucket.
 #

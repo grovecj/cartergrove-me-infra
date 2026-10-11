@@ -56,6 +56,7 @@ jobs:
       TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       GRAFANA_CLOUD_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_CLOUD_ACCESS_POLICY_TOKEN }}
       TF_VAR_grafana_stack_slug: ${{ vars.GRAFANA_STACK_SLUG }}
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
