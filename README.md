@@ -323,6 +323,12 @@ address. In Grafana: **Alerts & IRM → Alerting → Alert rules**, in the
 - **New services are covered.** No rule names a service. They select on
   `deployment_environment="production"` and group by service, so whatever
   starts reporting, or gets an uptime check, is alerted on from then.
+- **Each email links to the dashboard.** The buttons open the dashboard and
+  the panel that shows the same thing; they come from the rule's
+  `__dashboardUid__` and `__panelId__` annotations, and the panel ids are
+  the `id` fields in `services.json`. Re-exporting the dashboard keeps ids,
+  but deleting a panel and making it again gives it a new one: update the
+  rule's `panel` to match.
 - **"No data" and "Error" alerts.** "Service down" and "Near the free-tier
   limit" always have a value while monitoring itself works. If their query
   comes back empty, that is the alert (`DatasourceNoData`): the checks have

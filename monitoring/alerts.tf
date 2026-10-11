@@ -60,6 +60,11 @@ locals {
   # alert fires. A rule that has met it for less is "pending": one bad
   # minute sends nothing.
   #
+  # panel is the id of the dashboard panel that shows the same thing (the
+  # "id" fields in dashboards/services.json), for the button in the email.
+  # null where the dashboard has nothing to show: it is about our services,
+  # not about the account.
+  #
   # no_data says what an empty result means. Some of these queries only
   # return something when there's a problem, so empty is "OK". The others
   # always have a value while monitoring itself works, so empty is its own
@@ -78,6 +83,7 @@ locals {
       for         = "6m"
       no_data     = "NoData"
       labels      = {}
+      panel       = 2
       summary     = "{{ $labels.job }} is failing: {{ $labels.instance }}"
       description = "The uptime check has failed twice in a row, so players probably can't reach it."
     },
@@ -94,6 +100,7 @@ locals {
       for         = "10m"
       no_data     = "OK"
       labels      = {}
+      panel       = 8
       summary     = "{{ $labels.service }}: {{ printf \"%.0f\" $values.B.Value }}% of requests are failing"
       description = "More than 5% of requests have ended in a 5xx for 10 minutes."
     },
@@ -109,6 +116,7 @@ locals {
       for         = "5m"
       no_data     = "OK"
       labels      = {}
+      panel       = 14
       summary     = "{{ $labels.service }} has run out of database connections"
       description = "For 5 minutes, requests have been waiting for a connection or all of them were in use."
     },
@@ -129,6 +137,7 @@ locals {
       for         = "5m"
       no_data     = "OK"
       labels      = {}
+      panel       = 19
       summary     = "{{ $labels.service }} has stopped sending metrics"
       description = "Nothing has arrived for about 10 minutes. It's down, or it can't reach Grafana."
     },
@@ -144,6 +153,7 @@ locals {
       for         = "0s"
       no_data     = "OK"
       labels      = {}
+      panel       = 4
       summary     = "The certificate for {{ $labels.instance }} expires in {{ printf \"%.0f\" $values.B.Value }} days"
       description = "It should have been renewed by now."
     },
@@ -158,6 +168,7 @@ locals {
       for         = "1h"
       no_data     = "NoData"
       labels      = { service = "grafana-cloud" }
+      panel       = null
       summary     = "{{ printf \"%.0f\" $values.B.Value }}% of the free tier's ${local.series_allowance} series are in use"
       description = "Above 80% for an hour. Find what grew before Grafana starts dropping data."
     },
@@ -191,11 +202,24 @@ resource "grafana_rule_group" "services" {
       exec_err_state = "Error"
 
       labels = rule.value.labels
-      annotations = {
-        summary     = rule.value.summary
-        description = rule.value.description
-        dashboard   = "${local.dashboard_url}{{ if $labels.service }}?var-service={{ $labels.service }}{{ end }}"
-      }
+
+      # Two links to the dashboard. The email shows annotations as plain
+      # text, so `dashboard` is only a link if the mail program makes it
+      # one, but it opens with the right service picked. The two reserved
+      # names are what Grafana turns into the email's dashboard and panel
+      # buttons; those open with whichever service the picker defaults to.
+      # Grafana wants both of the pair or neither.
+      annotations = merge(
+        {
+          summary     = rule.value.summary
+          description = rule.value.description
+          dashboard   = "${local.dashboard_url}{{ if $labels.service }}?var-service={{ $labels.service }}{{ end }}"
+        },
+        rule.value.panel == null ? {} : {
+          "__dashboardUid__" = grafana_dashboard.services.uid
+          "__panelId__"      = tostring(rule.value.panel)
+        },
+      )
 
       data {
         ref_id         = "A"
