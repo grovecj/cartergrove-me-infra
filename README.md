@@ -124,8 +124,9 @@ dashboard. Alerts get added here later.
   keeps the dependency one-way (projects read `monitoring/`, never the
   reverse).
 - **Outputs**, the contract with the projects:
-  - `otlp_endpoint`: the gateway's base URL. Clients add `/v1/metrics`,
-    `/v1/logs` or `/v1/traces`.
+  - `otlp_endpoint`: the gateway's base URL, ending in `/otlp`. Clients add
+    `/v1/metrics`, `/v1/logs` or `/v1/traces`. (The provider's `otlp_url` is
+    the host alone, and the gateway answers 404 without the `/otlp`.)
   - `otlp_authorization` (sensitive): the whole `Authorization` header value,
     `Basic base64(<stack id>:<token>)`. base64 is an encoding, not
     encryption, so treat it exactly like the token. **`sensitive` stops at
