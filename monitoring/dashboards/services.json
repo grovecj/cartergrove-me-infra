@@ -815,7 +815,7 @@
       "id": 14,
       "type": "timeseries",
       "title": "Database connections",
-      "description": "The service's connection pool. Each service may hold 3 connections, because the shared Postgres cluster only allows about 22 in all. \"waiting\" above 0 means requests are queuing for a connection: the pool is full. During a deploy two copies run, each with its own pool; the busier one is shown.",
+      "description": "The service's connection pool. Each service may hold 3 connections, because the shared Postgres cluster only allows about 22 in all. \"waiting\" above 0 means requests are queuing for a connection: the pool is full. During a deploy two copies run, each with its own pool; each line shows the larger value across copies.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
