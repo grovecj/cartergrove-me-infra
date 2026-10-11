@@ -5,9 +5,9 @@
 # declares the uptime checks.
 
 # The stack's otlp_url is only the gateway's host. OTLP is served under /otlp
-# on it: a POST to <host>/v1/metrics is a 404, and to <host>/otlp/v1/metrics
-# it's accepted. trimsuffix keeps this right if the provider ever starts
-# returning the path itself.
+# on it: an unauthenticated POST to <host>/v1/metrics returns 404, while
+# <host>/otlp/v1/metrics returns 401, confirming that the latter path exists.
+# trimsuffix keeps this right if the provider ever starts
 output "otlp_endpoint" {
   description = "Base URL of the stack's OTLP gateway, ending in /otlp. Clients add the signal's path: /v1/metrics, /v1/logs or /v1/traces."
   value       = "${trimsuffix(trimsuffix(data.grafana_cloud_stack.main.otlp_url, "/"), "/otlp")}/otlp"
