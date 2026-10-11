@@ -107,6 +107,9 @@ jobs:
       # *variable* (vars.*), which unlike a secret isn't masked in logs.
       GRAFANA_CLOUD_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_CLOUD_ACCESS_POLICY_TOKEN }}
       TF_VAR_grafana_stack_slug: ${{ vars.GRAFANA_STACK_SLUG }}
+      # Where alerts are emailed. A secret so that it's masked in logs; the
+      # variable is sensitive, so plans don't print it either.
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

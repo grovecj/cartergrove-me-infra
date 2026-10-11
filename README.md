@@ -198,7 +198,9 @@ location (Ohio). No check signs in or carries a credential.
   to the others on `job` and `instance`. In Grafana: **Testing & synthetics
   → Synthetics → Checks**.
 - **Alerts are separate.** A failing check shows red in Grafana and tells
-  nobody. That's the alerting issue.
+  nobody by itself. The rules that do are in `monitoring/` (see
+  [Alerts](#alerts)), and count on checks running every 5 minutes: change
+  `frequency_minutes` and the "Service down" rule's `for` has to follow.
 
 **Budget.** The free tier allows 100,000 check runs a month. One check, from
 one location, every 5 minutes, is 12 runs an hour: 8,928 in a 31-day month.
@@ -285,6 +287,59 @@ folder; Terraform leaves those alone.
 To check that Terraform really owns it: delete the dashboard in the UI, run
 `terraform apply` in `monitoring/` (the plan is 1 to add), and it's back at
 the same URL.
+
+### Alerts
+
+Six rules in `monitoring/alerts.tf`, evaluated every minute, emailed to one
+address. In Grafana: **Alerts & IRM → Alerting → Alert rules**, in the
+`cartergrove.me` folder.
+
+| Alert | Fires when | For | First thing to check |
+| --- | --- | --- | --- |
+| Service down | an uptime check fails | 6 min (two runs) | Open the URL in the email. Then the app's deployments and runtime logs in DigitalOcean: a failed deploy, a crash loop, or (the `database` check alone) Postgres. |
+| High error rate | over 5% of requests end in a 5xx, with at least 10 requests in 5 minutes | 10 min | The dashboard's *Errors per second, by status*, then the service's logs for the stack trace. A blue restart line just before means the last deploy. |
+| Connection pool exhausted | requests are waiting for a database connection, or all 3 are in use | 5 min | The dashboard's *Database connections* and latency panels: a slow query holds connections. Then the cluster in DigitalOcean (is it up, is it at its connection limit?). |
+| No metrics | a service that reported in the last day has sent nothing | about 10 min | Is "Service down" firing too? Then it's down. If not, it's running but can't push: look for `Failed to publish metrics` in its logs (a rotated token, a wrong endpoint). |
+| Certificate expiring | a checked URL's TLS certificate has under 14 days left | at once | The domain in DigitalOcean (**App → Settings → Domains**): renewal is automatic, so something has blocked it, usually DNS. |
+| Near the free-tier limit | active series are above 80% of the 10,000 allowed | 1 h | Grafana's **Administration → Cost management** for which metric grew. Usually a new label with too many values. |
+
+- **Symptoms, not causes.** Each of these is something a player feels, or
+  is about to. High CPU or a full heap isn't on the list: if it hurts
+  anyone it shows up as errors or a failed check, and if it doesn't, an
+  email about it only teaches you to delete emails.
+- **`for` is what makes them quiet.** A rule has to be true at every
+  evaluation for that long before it fires; until then it's *pending* and
+  sends nothing. One timed-out check or one bad minute never reaches you.
+  The price is that you hear about a real outage that much later.
+- **A deploy sends nothing.** Old and new copy overlap for a minute or two
+  under different `instance` labels. The rules add up or compare per
+  service, so the old copy going away isn't "no metrics", and a pool that's
+  briefly full while the new copy starts is gone well inside 5 minutes.
+- **One email per service.** The policy groups alerts by their `service`
+  label. An outage sets off "Service down" for each of the service's checks
+  and then "No metrics", and they arrive as one email, updated at most every
+  5 minutes while it changes and repeated every 12 hours while it doesn't.
+  A second email says when it's resolved.
+- **New services are covered.** No rule names a service. They select on
+  `deployment_environment="production"` and group by service, so whatever
+  starts reporting, or gets an uptime check, is alerted on from then.
+- **"No data" and "Error" alerts.** "Service down" and "Near the free-tier
+  limit" always have a value while monitoring itself works. If their query
+  comes back empty, that is the alert (`DatasourceNoData`): the checks have
+  stopped reporting, or a metric was renamed. `DatasourceError` is a query
+  Grafana couldn't run at all. Neither means a service is down; both mean
+  the thing that would tell you is broken.
+- **The address stays out of the repo.** It's `var.alert_email`, from the
+  `ALERT_EMAIL` secret, marked `sensitive` so plans print
+  `(sensitive value)`. It is in the state file, in the private bucket.
+- **The policy is all of Grafana's.** A Grafana has one notification policy
+  and `grafana_notification_policy` owns the whole of it: routes added in
+  the UI are removed by the next apply. Contact points, the policy and the
+  rules are locked in the UI for the same reason ("provisioned").
+
+To see one fire, lower its threshold or reverse its test in a branch, apply
+locally, wait out its `for`, and put it back. For "Service down" without
+breaking anything: add an uptime check whose `body_must_match` can't match.
 
 ### One-time: first apply
 
@@ -734,7 +789,10 @@ while one is running in CI.
    For `monitoring/`, add the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` secret
    (repository **and** `production`) and the `GRAFANA_STACK_SLUG` repository
    *variable*, from bootstrap step 7. The provider reads the token from the
-   environment; the slug is passed as `TF_VAR_grafana_stack_slug`.
+   environment; the slug is passed as `TF_VAR_grafana_stack_slug`. Also add
+   an `ALERT_EMAIL` secret (repository **and** `production`): the address
+   alerts are emailed to, passed as `TF_VAR_alert_email`. Without it the
+   plan fails with "alert_email is not an email address".
 2. **The `production` environment**, before the first merge. A workflow that
    names an environment that doesn't exist creates it *without* protection,
    and the apply would run unapproved. Under **Settings → Environments → New

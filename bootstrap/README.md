@@ -191,6 +191,7 @@ can do anything, so both are made by hand, once.
    ```powershell
    $env:GRAFANA_CLOUD_ACCESS_POLICY_TOKEN = "glc_..."
    $env:TF_VAR_grafana_stack_slug         = "<slug>"
+   $env:TF_VAR_alert_email                = "<where alerts are emailed>"
    ```
 
 This token is the **administrator** credential: with it you can mint tokens
