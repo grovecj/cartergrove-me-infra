@@ -1,3 +1,11 @@
+# Off destroys the Droplet, firewall and DNS record (and the world on the
+# Droplet's disk) to stop the spend. On builds them again with a fresh world.
+variable "enabled" {
+  description = "Whether the server exists. Set to false to tear it down and stop its billing."
+  type        = bool
+  default     = false
+}
+
 variable "size" {
   description = "Droplet size slug (`doctl compute size list`). The server's Java heap is set in the repo's docker-compose.yml (MEMORY); keep it about 1 GB below this."
   type        = string
