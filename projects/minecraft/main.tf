@@ -46,14 +46,14 @@ locals {
 # The DigitalOcean Project that groups this project's resources in the
 # control panel. `resources` takes URNs ("do:droplet:<id>", ...). Firewalls
 # and DNS records can't be assigned to a Project, so only the Droplet is listed.
+# The Project itself is free, so it stays even while var.enabled is off.
 resource "digitalocean_project" "minecraft" {
   name        = local.project
   description = "minecraft.cartergrove.me: Paper Minecraft server."
   purpose     = "Service or API"
   environment = "Production"
-  resources = [
-    digitalocean_droplet.server.urn,
-  ]
+  # A `for` expression over the Droplet list: one URN, or none when off.
+  resources = [for droplet in digitalocean_droplet.server : droplet.urn]
 }
 
 # --- Droplet -----------------------------------------------------------------
@@ -67,7 +67,13 @@ data "digitalocean_ssh_key" "main" {
 # No `vpc_uuid`: the Droplet goes in the region's default VPC, not the shared
 # one. The database firewall in shared/ trusts the whole shared VPC, and this
 # machine has SSH open to the internet and needs no database, so it stays out.
+#
+# `count` makes this a list of Droplets: one while var.enabled is on, none
+# while it's off. Going from 1 to 0 destroys the Droplet (and its disk) and
+# stops its billing; going back to 1 builds a fresh one with a new world.
 resource "digitalocean_droplet" "server" {
+  count = var.enabled ? 1 : 0
+
   name     = "${local.project}-server"
   region   = local.region
   size     = var.size
@@ -84,10 +90,10 @@ resource "digitalocean_droplet" "server" {
   })
 
   lifecycle {
-    # The world lives on this Droplet's disk (/opt/minecraft/data), so
-    # destroying it deletes the world. Terraform refuses any plan that would.
-    # To really delete it, remove this line first.
-    prevent_destroy = true
+    # No `prevent_destroy` while var.enabled can turn the server off: it can't
+    # depend on a variable, and it would refuse the destroy that turning off
+    # needs. The world lives on this Droplet's disk (/opt/minecraft/data), so
+    # put it back (and back the world up) once a world is worth keeping.
 
     # Changing user_data normally replaces the Droplet. cloud-init only runs
     # on first boot anyway, so an edit to cloud-init.yml should not rebuild a
@@ -98,21 +104,13 @@ resource "digitalocean_droplet" "server" {
 
 # --- Firewall ----------------------------------------------------------------
 
-# A firewall from the old grovecj/minecraft-server config still exists (its
-# Droplet doesn't), so Terraform adopts it instead of creating a second one
-# with the same name. An `import` block does that during a normal plan/apply;
-# once the firewall is in state the block is a no-op and can stay. If the
-# firewall is ever deleted by hand before the first apply, delete this block.
-import {
-  to = digitalocean_firewall.server
-  id = "4d7bb0a1-8e44-41fd-9a94-caea36f9b388"
-}
-
 # A cloud firewall sits in front of the Droplet: anything not listed in an
-# inbound rule never reaches it.
+# inbound rule never reaches it. It goes and comes back with the Droplet.
 resource "digitalocean_firewall" "server" {
+  count = var.enabled ? 1 : 0
+
   name        = "${local.project}-firewall"
-  droplet_ids = [digitalocean_droplet.server.id]
+  droplet_ids = [digitalocean_droplet.server[0].id]
 
   # SSH
   inbound_rule {
@@ -170,23 +168,18 @@ resource "digitalocean_firewall" "server" {
 
 # --- DNS ---------------------------------------------------------------------
 
-# The old config's `minecraft` record is still in the zone too, pointing at the
-# old Droplet's IP. Adopted for the same reason as the firewall: a second A
-# record would send half the players to an address that's no longer ours. The
-# id is "<domain>,<record id>" (`doctl compute domain records list <domain>`).
-import {
-  to = digitalocean_record.server
-  id = "cartergrove.me,1809727932"
-}
-
 # minecraft.cartergrove.me -> the Droplet's public IP. Players use this name
 # for both editions, and Caddy serves the web map on it. An A record (name ->
 # IPv4 address) rather than the CNAME the App Platform projects use, because
 # there's an address to point at instead of another hostname.
+# Removed while the server is off, so the name doesn't point at an address
+# DigitalOcean may hand to someone else.
 resource "digitalocean_record" "server" {
+  count = var.enabled ? 1 : 0
+
   domain = local.domain
   type   = "A"
   name   = local.project
-  value  = digitalocean_droplet.server.ipv4_address
+  value  = digitalocean_droplet.server[0].ipv4_address
   ttl    = 300
 }

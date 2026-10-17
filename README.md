@@ -669,18 +669,28 @@ This project only builds the machine. It was moved here from that repo's
 - **DNS.** An `A` record `minecraft` → the Droplet's IP. Caddy on the Droplet
   gets the TLS certificate itself once the record resolves.
 - **Outputs:** `hostname`, `bluemap_url`, `droplet_id`, `droplet_ip`,
-  `ssh_command`.
+  `ssh_command` (the last three are null while the server is off).
 
-The Droplet has `prevent_destroy`: the world is on its disk
-(`/opt/minecraft/data`), so Terraform refuses any plan that would delete it.
-Resizing (`var.size`) is done in place, with a short power-off. Changing the
-image or region replaces the Droplet, so back the world up first.
+**Currently off.** `var.enabled` (default `false`) decides whether the
+Droplet, firewall and DNS record exist. Off destroys all three, which stops
+the $24/month charge (a powered-off Droplet is still billed in full, and
+Terraform can't power one off anyway). The DO Project stays; it's free. To
+play again, set the default back to `true` and merge: the apply builds a new
+Droplet with a **fresh world**, then do step 3 below again if the server
+repo's Deploy workflow needs the address.
+
+While the toggle exists the Droplet has no `prevent_destroy` (it can't
+depend on a variable). The world is on the Droplet's disk
+(`/opt/minecraft/data`), so once a world is worth keeping, back it up before
+turning the server off, or put `prevent_destroy` back. Resizing (`var.size`)
+is done in place, with a short power-off. Changing the image or region
+replaces the Droplet, so back the world up first.
 
 ### One-time: the first apply
 
 The old Droplet is gone, but its firewall and `A` record were left behind.
-`main.tf` *imports* both (`import` blocks, as `shared/` does for the DNS zone)
-instead of making duplicates, so the first plan reads
+`main.tf` *imported* both (`import` blocks, as `shared/` does for the DNS zone,
+removed once they were in state) instead of making duplicates, so the first plan reads
 `2 to import, 2 to add, 2 to change`: the Droplet and the DO Project are new,
 and the firewall and the record are pointed at the new Droplet.
 
