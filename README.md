@@ -14,6 +14,7 @@ projects/
   games/           # root module: games.cartergrove.me hub (one app, one path per game)
     hub/           # the hub's landing page, served at "/"
   accounts/        # root module: auth.cartergrove.me sign-in service + its database
+  crossword/       # root module: crossword.cartergrove.me (backend + frontend) + its database
   beach/           # root module: beach.cartergrove.me live cam page
   minecraft/       # root module: minecraft.cartergrove.me server (a Droplet)
 modules/           # reusable building blocks, called from root modules
@@ -35,12 +36,13 @@ in. It has its own backend and therefore its own state file, so `apply` in
 | `monitoring/` | `monitoring/terraform.tfstate` |
 | `projects/games/` | `projects/games/terraform.tfstate` |
 | `projects/accounts/` | `projects/accounts/terraform.tfstate` |
+| `projects/crossword/` | `projects/crossword/terraform.tfstate` |
 | `projects/beach/` | `projects/beach/terraform.tfstate` |
 | `projects/minecraft/` | `projects/minecraft/terraform.tfstate` |
 
 **Sharing values.** Projects read `shared/`'s outputs (`region`, `domain`,
 `vpc_id`, `vpc_ip_range`, `postgres`) with a read-only `data "terraform_remote_state"
-"shared"` block. `projects/accounts/` and `projects/games/` read `monitoring/`'s outputs
+"shared"` block. `projects/accounts/`, `projects/games/` and `projects/crossword/` read `monitoring/`'s outputs
 (`otlp_endpoint`, `otlp_authorization`, and the `synthetic_monitoring_*` pair
 their uptime checks are made with) the same way, wrapping the tokens in
 `sensitive(...)`: an output's `sensitive` marking doesn't survive the trip
@@ -624,6 +626,71 @@ locally (don't let it overlap a CI apply).
    `"issuer":"https://auth.cartergrove.me"`. The discovery endpoint arrives
    with grovecj/accounts#3; until then, `/actuator/health` should say `UP`.
 
+## Crossword (`projects/crossword/`)
+
+`crossword.cartergrove.me` runs [grovecj/crossword](https://github.com/grovecj/crossword):
+build crossword puzzles with AI help, then publish them for anyone to play.
+Tracking issue: [grovecj/crossword#26](https://github.com/grovecj/crossword/issues/26).
+
+- **App.** App Platform app `crossword` with two components, both built from
+  the repo's `main` on every push:
+  - **`api`**, a service built from `backend/Dockerfile` (build context
+    `backend/`), on the smallest instance (`var.instance_size`). New
+    deployments only go live once `/actuator/health` answers.
+  - **`web`**, a static site built from `frontend/` with `npm run build`
+    (Node, from `package.json`'s `engines`) and served from `dist/`.
+    `catchall_document = "index.html"` serves the single-page app for client
+    routes such as `/puzzles/...` and `/auth/callback`.
+- **Routing.** `/api` → `api`, with the prefix kept
+  (`preserve_path_prefix`): the backend serves `/api/**`, as it does locally
+  behind Vite's proxy. Everything else → `web`. One origin, so no CORS.
+- **Database.** Database and user `crossword` on the **shared** cluster, via
+  `modules/project-database`. The app is attached to the shared VPC and
+  connects to the cluster's `private_host`, as `projects/accounts/` does.
+- **Env vars** (`api`). `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`,
+  `AUTH_ISSUER` (the accounts project's `issuer` output, read from its
+  state), plus the `SECRET` ones: `SPRING_DATASOURCE_PASSWORD` and
+  `ANTHROPIC_API_KEY`. For monitoring, `GRAFANA_OTLP_ENDPOINT` and
+  `GRAFANA_OTLP_AUTHORIZATION` (`SECRET`) from `monitoring/`'s state, and
+  `DEPLOYMENT_ENVIRONMENT` (`production`). The token audience (`crossword`)
+  is in the app's own config, so it isn't set here.
+- **Env vars** (`web`, build time). `VITE_AUTH_ISSUER`, the same issuer,
+  baked into the bundle by Vite.
+- **Claude API key.** Variable `anthropic_api_key`, `sensitive`. CI fills it
+  from the `ANTHROPIC_API_KEY` secret (see "One-time CI setup"). Locally, set
+  `TF_VAR_anthropic_api_key`.
+- **Domain and TLS.** A `CNAME` record `crossword` → the app's
+  `*.ondigitalocean.app` hostname, as for the games hub.
+- **Outputs:** `hostname`, `url`, `app_id`, `app_default_url`.
+- **Not yet:** uptime checks and alerts arrive with
+  [grovecj/crossword#27](https://github.com/grovecj/crossword/issues/27).
+
+### One-time: crossword's first apply
+
+1. **Claude API key.** Create a key in the Claude Console and add it as the
+   `ANTHROPIC_API_KEY` secret (see "One-time CI setup"). Without it the plan
+   fails on purpose.
+2. **GitHub access.** Add `grovecj/crossword` to DigitalOcean's GitHub app
+   (see "One-time: GitHub access" above). The repo is private, so App
+   Platform can't see it otherwise.
+3. **Apply.** It creates the database and user, then the app. The first
+   `api` deployment fails its health check, because Flyway can't create
+   tables until the grant below exists, so the apply fails at the app.
+   Terraform marks the app *tainted* and skips what depends on it (the
+   `crossword` CNAME, the DO Project).
+4. **Database grant.** As `doadmin`, connected to the `crossword` database
+   (see [modules/README.md](modules/README.md#project-database)):
+
+   ```sql
+   GRANT CREATE ON SCHEMA public TO crossword;
+   ```
+
+5. **Re-run the crossword apply** (the failed `apply (projects/crossword)`
+   job → **Re-run jobs**, and approve it again). Its plan replaces the tainted
+   app and creates the CNAME and Project. Then check
+   `curl https://crossword.cartergrove.me/api/word-list` returns JSON and
+   `https://crossword.cartergrove.me/` loads the app.
+
 ## Beach cams (`projects/beach/`)
 
 `beach.cartergrove.me` serves a page of live cams from Schooners in Panama
@@ -801,6 +868,11 @@ while one is running in CI.
    **and** as `production` environment secrets. The workflows pass them as
    `TF_VAR_google_client_id` / `TF_VAR_google_client_secret`. Without them,
    the accounts plan fails with "google_client_id is empty".
+
+   For `projects/crossword/`, add `ANTHROPIC_API_KEY` (a Claude API key)
+   as a repository secret **and** a `production` environment secret. The
+   workflows pass it as `TF_VAR_anthropic_api_key`. Without it, the crossword
+   plan fails with "anthropic_api_key is empty".
 
    For `monitoring/`, add the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` secret
    (repository **and** `production`) and the `GRAFANA_STACK_SLUG` repository

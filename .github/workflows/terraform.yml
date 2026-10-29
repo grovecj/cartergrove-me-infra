@@ -101,6 +101,9 @@ jobs:
       # sensitive variables, so plans print "(sensitive value)", never them.
       TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
       TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      # Only projects/crossword/ declares this (its Claude API key). Sensitive,
+      # like the Google pair.
+      TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
       # Only monitoring/ uses these. The token is the grafana provider's
       # credential (it manages Grafana Cloud, and is never given to a
       # service). The stack slug isn't secret, so it's a repository
