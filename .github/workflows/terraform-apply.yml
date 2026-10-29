@@ -54,6 +54,7 @@ jobs:
       TF_VAR_postgres_trusted_ips: ${{ secrets.POSTGRES_TRUSTED_IPS || '[]' }}
       TF_VAR_google_client_id: ${{ secrets.GOOGLE_CLIENT_ID }}
       TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
       GRAFANA_CLOUD_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_CLOUD_ACCESS_POLICY_TOKEN }}
       TF_VAR_grafana_stack_slug: ${{ vars.GRAFANA_STACK_SLUG }}
       TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
