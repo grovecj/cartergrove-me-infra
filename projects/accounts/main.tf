@@ -205,6 +205,15 @@ resource "digitalocean_app" "accounts" {
         scope = "RUN_TIME"
         type  = "GENERAL"
       }
+      # The one account that may grant and revoke permissions in every
+      # project (grovecj/accounts#16): Carter's account id (users.id, the
+      # `sub` in Carter's tokens). Not a secret; it only names the owner.
+      env {
+        key   = "AUTH_OWNER_ACCOUNT_ID"
+        value = "01a0f440-c289-773d-8bdf-a752ef03fbd1"
+        scope = "RUN_TIME"
+        type  = "GENERAL"
+      }
       # Monitoring: the service pushes its metrics to this OTLP endpoint,
       # sending the second value as its Authorization header. That value
       # holds a token that can only write telemetry (see monitoring/). With
